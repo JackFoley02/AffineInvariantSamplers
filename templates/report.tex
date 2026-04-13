@@ -1,0 +1,63 @@
+\documentclass{aastex631}
+\usepackage{graphicx,textcomp,fancyhdr,hyperref}
+\begin{document}
+\pagestyle{fancy}
+\pagenumbering{gobble}
+\chead{Summary of Benchmark Sampling Results for {{ label }} Distribution, {{ D }} Dimensions {{ aftitle }} }
+
+%Sampler Summary Table
+{{ tab_summary }}
+
+%Autocorrelation Plot
+
+{{ fig_autocorr }}
+
+%Sampler Parameters Table
+
+{{ tab_params }}
+
+%Sampler Standard Deviations
+
+{{ tab_sigmas }}
+
+%Sampler Covariances
+
+{{ tab_covs }}
+
+%Corner Plots
+
+{{ corner_1 }}
+{{ corner_2 }}
+{{ corner_3 }}
+{{ corner_4 }}
+{{ corner_5 }}
+{{ corner_6 }}
+{{ corner_7 }}
+{{ corner_8 }}
+
+%Trends
+
+{{ trends_1 }}
+{{ trends_2 }}
+{{ trends_3 }}
+{{ trends_4 }}
+{{ trends_5 }}
+{{ trends_6 }}
+{{ trends_7 }}
+{{ trends_8 }}
+
+%HMC Sampler tuning parameters
+
+{{ tab_hmc }}
+
+%SST plot
+
+{{ fig_sst }}
+
+\lfoot{
+  \footnotesize{
+    Based on the work from Chen 2025: 
+    \href{https://arxiv.org/abs/2505.02987}{https://arxiv.org/abs/2505.02987}
+  }
+}
+\end{document}
