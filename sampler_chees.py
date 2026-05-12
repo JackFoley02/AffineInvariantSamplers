@@ -521,3 +521,6 @@ def hmc_chees(
 
 
     return samples, accepts, final_eps, eps_hist, parmslist
+
+
+#adding this so I can commit it again
