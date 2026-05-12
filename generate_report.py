@@ -143,7 +143,7 @@ class SamplerReport:
 
             if os.path.exists(fname_corner):
                 fig_template = env.get_template('fig_corner.tex')
-                reportkw[f'corner_{num}'] = fig_template.render(infile=fname_corner, maxdim = self.maxdim + 1, label = self.label, sampler = name, overlayc = overlayc)
+                reportkw[f'corner_{num+1}'] = fig_template.render(infile=fname_corner, maxdim = self.maxdim + 1, label = self.label, sampler = name, overlayc = overlayc)
             else:
                 print(f'File Not Found: {fname_corner}')
                 
@@ -151,7 +151,7 @@ class SamplerReport:
             fname_trends = os.path.abspath(f'{self.label}Results/{self.ndims}d{self.afstring}/trends/trends_{safe_name}.pdf')
             if os.path.exists(fname_trends):
                 fig_template = env.get_template('fig_trends.tex')
-                reportkw[f'trends_{num}'] = fig_template.render(infile = fname_trends, maxdim = self.maxdim + 1, label = self.label, sampler = name)
+                reportkw[f'trends_{num+1}'] = fig_template.render(infile = fname_trends, maxdim = self.maxdim + 1, label = self.label, sampler = name)
             else:
                 print(f'File Not Found: {fname_trends}')
 

@@ -60,16 +60,23 @@ def plot_trends(samples: np.ndarray, burnIn: np.ndarray, sig:float = None, outfi
             continue
         if idx >= 10:
             break
-
+        stride = max(1, full.shape[1] // 2000)
+        ax.plot(
+            full[:, ::stride, idx].T,
+            alpha=0.2,
+            color='lightgray',
+            zorder=1,
+            rasterized=True,
+)
         ax.plot(full[:2, :, idx].T, alpha = 0.7, zorder = 4) #plot first 3 walkers for the indexed variable
-        ax.plot(full[:, :, idx].T, alpha = 0.2, color = 'lightgray', zorder = 1) #add all walkers in the background
+
         ax.axvline(x=burnIn.shape[1], zorder = 5, color = 'black', linestyle = '--') #adding cutoff line to separate burn-in from the rest of the samples
         ax.set_ylabel(labels[idx])
 
         if (idx == (D - 1)) or (idx == (D - 2)):
             ax.set_xlabel('Step Number')
-
-    plt.savefig(outfile, dpi = 200, bbox_inches = 'tight')
+        ax.set_rasterization_zorder(3)
+    plt.savefig(outfile, dpi = 100, bbox_inches = 'tight')
     plt.close()
 
 def benchmark_trends(results: dict, outdir:str, distrib:str = ''):

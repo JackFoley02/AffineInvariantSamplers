@@ -1,12 +1,93 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import argparse
+import os
+from plotTools.benchmark_corner import benchmark_corner
+from plotTools.benchmark_trends import benchmark_trends
+from plotTools.benchmark_autocorrelation import benchmark_autocorrelation
 
 from samplers import side_move, stretch_move, hmc, hamiltonian_walk_move, hamiltonian_side_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 
+#parser to identify the number of dimensions from command line
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Benchmark tests of different MCMC sampling algorithms, applied to a multidimensional Rosenbrock distribution.'
+    )
+    parser.add_argument(
+        '--dim',
+        type = int,
+        default = 2,
+        help="Number of dimensions for the Rosenbrock benchmark (default: 2)"
+    )
+    return parser.parse_args()
 
-def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1):
+
+args = parse_args()
+d = args.dim
+
+if d < 2:
+    raise ValueError(f'The dimension of this distribution must be greater than 2, received {d}')
+
+def affine_transform(dim: int, trans_scale: float = 2.0, cond: float = 10.0):
+    """
+    Generates an arbitrary transformation matrix A, and translation vector B, to perform
+    an affine-invariant transformation upon the distribution of choice, i.e. 
+
+    y = Ax + B
+    
+    Arguments:
+    ----------
+    dim:
+        integer number of dimensions for the particular distribution. 
+    trans_scale:
+        The degree of translation applied to the distribution. Generally, this shouldn't impact the 
+        ability of samplers on the distribution, regardless of their algorithmic affine-invariance
+    cond:
+        The length of the longest axis divided by the length of the smallest axis (which is set to 1). 
+        Encodes the degree to which different axes are stretched. A larger value will generate a more anisotropic distribution
+
+    Returns:
+    ----------
+    A:
+        The transformation matrix (dim x dim).
+    B: 
+        The translation vector (dim x 1).
+    Ainv:
+        The inverse of A (dim x dim).
+    """
+
+    rng = np.random.default_rng(42)
+    
+    B = rng.uniform(-trans_scale, trans_scale, size = dim) #define B vector
+
+    #A bunch of matrix calculations to follow. First, let's get some rotation matrices.
+
+    Mu = rng.standard_normal((dim, dim)) #Define entirely random square matrix
+    Qu, Ru = np.linalg.qr(Mu) #Take QR decomposition of Mu. Qu gives the orthonormal basis, Ru gives coefficients of projection
+
+    #QR Decomp. is not unique! We need to ensure there is no ambiguity in the sign of diag(Q)
+    #This is important for saving time when checking if Q is a true rotation matrix (i.e. det(Q) = +1)
+
+    signsu = np.sign(np.diag(Ru)) #Take signs from each diagonal R entry
+    signsu[signsu == 0] = 1.0 #convert zeroes (from dependent axes) to ones
+    U = Qu @ np.diag(signsu) #left w/ transformation matrix U, with unambiguous signage
+    if np.linalg.det(U) < 0: #Check to make sure det(S) = +1, fix it otherwise
+        U[:, 0] *= -1
+
+    #We can represent A, an arbitrary affine transformation, in terms of its singular value decomposition:
+    # A = U @ S for singular matrix S. This encodes the stretching along each coordinate axis. 
+    s_vals = np.geomspace(1.0, cond, dim)
+    S = np.diag(s_vals)
+
+    A = U @ S
+    Ainv = np.linalg.inv(A)
+    
+    return A, B, Ainv
+
+
+def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1, affine = False):
     """
     Benchmark different MCMC samplers on a ring-shaped distribution.
     
@@ -21,14 +102,29 @@ def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1):
     sigma : float
         Width parameter of the ring (smaller values make a sharper ring)
     """
+
+    if affine: #Apply an affine transformation 
+        #i.e. y = Ax + b
+        #Affine-invariant samplers should behave equally well under any rotation, which is what this tests
+        A, B, Ai = affine_transform(dim = dim, trans_scale=2.0, cond=100) 
+
+    else:
+        A = np.eye(dim) #identity matrix that is dim x dim
+        B = np.zeros(dim) #just a null vector
+        Ai = np.eye(dim)
+
+
     # Define the ring distribution log-density
     def log_density(x):
         """Log density of the ring-shaped distribution"""
+        x = np.asarray(x)
         if x.ndim == 1:
             x = x.reshape(1, -1)
+
+        u = (x - B) @ Ai.T
         
         # Calculate squared radius for each sample
-        radius_sq = np.sum(x**2, axis=1)
+        radius_sq = np.sum(u**2, axis=1)
         
         # Calculate potential: (r^2 - 1)^2 / sigma^2
         potential = (radius_sq - 1.0)**2 / (sigma**2)
@@ -39,30 +135,35 @@ def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1):
     # Define the gradient of the negative log density
     def gradient(x):
         """Gradient of the negative log density (potential gradient)"""
+        x = np.asarray(x)
         if x.ndim == 1:
             x = x.reshape(1, -1)
         
         batch_size = x.shape[0]
         grad = np.zeros_like(x)
+
+        u = (x - B) @ Ai.T
         
         # Calculate the squared radius for each sample
-        radius_sq = np.sum(x**2, axis=1, keepdims=True)  # Shape: (batch_size, 1)
+        radius_sq = np.sum(u**2, axis=1, keepdims=True)  # Shape: (batch_size, 1)
         
         # Calculate the gradient formula: 4(r^2-1)x / sigma^2
         # The factor of 4 comes from the chain rule derivative
-        grad = 4.0 * (radius_sq - 1.0) * x / (sigma**2)
+        grad = 4.0 * (radius_sq - 1.0) * u / (sigma**2)
         
         # Return negative gradient (for potential)
-        return grad
+        return grad @ Ai
     
     # Define the potential energy (negative log density)
     def potential(x):
         """Negative log density (potential energy)"""
+        x = np.asarray(x)
         if x.ndim == 1:
             x = x.reshape(1, -1)
         
+        u = (x - B) @ Ai.T
         # Calculate squared radius for each sample
-        radius_sq = np.sum(x**2, axis=1)
+        radius_sq = np.sum(u**2, axis=1)
         
         # Calculate potential energy: (r^2 - 1)^2 / sigma^2
         return (radius_sq - 1.0)**2 / (sigma**2)
@@ -70,6 +171,9 @@ def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1):
     # Initial state - place points near but not exactly on the ring
     initial = np.random.randn(dim)
     initial = initial / np.sqrt(np.sum(initial**2)) * 1.2  # Start slightly outside the ring
+
+    if affine: #maps starting point(s) to the transformed basis
+        initial = initial @ A.T + B
     
     # Dictionary to store results
     results = {}
@@ -79,18 +183,18 @@ def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1):
     
     # Define samplers to benchmark - parameters tuned for the ring distribution
     samplers = {
-        "Side Move": lambda: side_move(log_density, initial, total_samples, n_walkers=dim*2, gamma=1.687),
-        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=dim*2, a=1.0+2.151/np.sqrt(dim)),
+        "Side Move": lambda: side_move(log_density, initial, total_samples, n_walkers=dim*20, gamma=1.687),
+        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=dim*20, a=1.0+2.151/np.sqrt(dim)),
         "HMC n=10": lambda: hmc(log_density, initial, total_samples, gradient, epsilon=0.1, L=10, n_chains=1),
         "HMC n=2": lambda: hmc(log_density, initial, total_samples, gradient, epsilon=0.5, L=2, n_chains=1),
         "Hamiltonian Walk Move n=10": lambda: hamiltonian_walk_move(gradient, potential, initial, total_samples, 
-                                                        n_chains_per_group=dim, epsilon=0.1, n_leapfrog=10, beta=1.0),
+                                                        n_chains_per_group=dim*10, epsilon=0.1, n_leapfrog=10, beta=1.0),
         "Hamiltonian Walk Move n=2": lambda: hamiltonian_walk_move(gradient, potential, initial, total_samples, 
-                                                        n_chains_per_group=dim, epsilon=0.5, n_leapfrog=2, beta=1.0),
+                                                        n_chains_per_group=dim*10, epsilon=0.5, n_leapfrog=2, beta=1.0),
         "Hamitonian Side Move n=10": lambda: hamiltonian_side_move(gradient, potential, initial, total_samples,
-                                                        n_chains_per_group=dim, epsilon=0.1, n_leapfrog=10, beta=1.0),
+                                                        n_chains_per_group=dim*10, epsilon=0.1, n_leapfrog=10, beta=1.0),
         "Hamitonian Side Move n=2": lambda: hamiltonian_side_move(gradient, potential, initial, total_samples, 
-                                                                              n_chains_per_group=dim, epsilon=0.5, n_leapfrog=2, beta=1.0),
+                                                                              n_chains_per_group=dim*10, epsilon=0.5, n_leapfrog=2, beta=1.0),
     }
     
     # Benchmark each sampler with careful error handling
@@ -103,6 +207,8 @@ def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1):
             
             # Apply burn-in: discard the first burn_in samples
             post_burn_in_samples = samples[:, burn_in:, :]
+            series = post_burn_in_samples
+            burn_in_samps = samples[:, :burn_in, :]
             
             # Flatten samples from all chains
             flat_samples = post_burn_in_samples.reshape(-1, dim)
@@ -139,14 +245,17 @@ def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1):
         # Store results
         results[name] = {
             "samples": flat_samples,
+            'series':series,
             "acceptance_rates": acceptance_rates,
+            "burn_in":burn_in_samps,
             "mean_radius": mean_radius,
             "radius_std": radius_std,
             "mean_distance_from_ring": mean_distance_from_ring,
             "autocorrelation": acf,
             "tau": tau,
             "ess": ess,
-            "time": elapsed
+            "time": elapsed,
+            "sigma":sigma
         }
         
         print(f"  Acceptance rate: {np.mean(acceptance_rates):.2f}")
@@ -157,27 +266,22 @@ def benchmark_samplers_ring(dim=10, n_samples=10000, burn_in=1000, sigma=0.1):
         # print(f"  Effective sample size: {ess:.2f}" if np.isfinite(ess) else "  Effective sample size: NaN")
         # print(f"  ESS/sec: {ess/elapsed:.2f}" if np.isfinite(ess) else "  ESS/sec: NaN")
         print(f"  Time: {elapsed:.2f} seconds")
-    
-    return results, sigma
 
-def plot_ring_results(results, dim=10, sigma=0.1):
+
+    transformation = {"affine":affine, "A":A, 'B':B}
+    
+    return results, sigma, transformation
+
+def plot_ring_results(results, dim=10, sigma=0.1, transform = {'affine':False, 'A':0.0, 'B':0.0}):
     """Plot comparison of sampler results for ring distribution"""
     samplers = list(results.keys())
     
-    # 1. Plot autocorrelation functions
-    plt.figure(figsize=(12, 6))
-    for i, name in enumerate(samplers):
-        acf = results[name]["autocorrelation"]
-        max_lag = min(300, len(acf))
-        plt.plot(np.arange(max_lag), acf[:max_lag], label=name)
-    
-    plt.xlabel("Lag")
-    plt.ylabel("Autocorrelation")
-    plt.title("Autocorrelation Functions (First Dimension)")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig("ring_autocorrelation.png")
-    
+
+    if transform['affine']:
+        afstring = "_af" #suffix to append to file name if affine transformation has been applied
+    else:
+        afstring = '' #no transformation? set suffix to empty string
+
     # 2. Plot 2D projection of samples
     if dim >= 2:
         plt.figure(figsize=(15, 12))
@@ -187,6 +291,9 @@ def plot_ring_results(results, dim=10, sigma=0.1):
         circle_x = np.cos(theta)
         circle_y = np.sin(theta)
         
+        #performing affine transformation
+
+
         # Plot multiple rings showing the width of the distribution
         widths = [1, 2, 3]  # Standard deviations
         for w in widths:
@@ -215,6 +322,9 @@ def plot_ring_results(results, dim=10, sigma=0.1):
             plt.scatter(plot_samples[:, 0], plot_samples[:, 1], 
                        color=colors[i], alpha=0.5, label=name)
         
+        outdir = f"RingResults/{d}d{afstring}"
+        os.makedirs(outdir, exist_ok = True)
+
         plt.xlabel("x₁")
         plt.ylabel("x₂")
         plt.title(f"Ring Distribution: First 2 Dimensions (σ = {sigma})")
@@ -222,15 +332,32 @@ def plot_ring_results(results, dim=10, sigma=0.1):
         plt.grid(True, alpha=0.3)
         plt.axis('equal')  # Equal aspect ratio
         plt.tight_layout()
-        plt.savefig("ring_samples_2d.png")
+        plt.savefig(f"RingResults/{d}d{afstring}/ring_samples_2d.png")
 
     return
 
 # Run the benchmark for the ring distribution
 # Note: You need to have the sampler functions (side_move, stretch_move, etc.) defined elsewhere
-results, sigma = benchmark_samplers_ring(dim=50, n_samples=100000, burn_in=20000, sigma=0.25)
+results, sigma, transform = benchmark_samplers_ring(dim=d, n_samples=10000, burn_in=2000, sigma=0.25, affine = False)
 
 # Plot the results
-plot_ring_results(results, dim=50, sigma=0.25)
+plot_ring_results(results, dim=d, sigma=0.25)
+
+if transform['affine']:
+    afstring = '_af'
+else:
+    afstring = ''
+# Plot the results
+
+outdir = f"RingResults/{d}d{afstring}"
+corner_dir = f"RingResults/{d}d{afstring}/corner"
+trends_dir = f"RingResults/{d}d{afstring}/trends"
+os.makedirs(outdir, exist_ok=True)
+os.makedirs(corner_dir, exist_ok=True)
+os.makedirs(trends_dir, exist_ok=True)
+
+benchmark_corner(results, f'RingResults/{d}d{afstring}/corner', thin = 10, sigma = 0.25)
+benchmark_trends(results, f'RingResults/{d}d{afstring}/trends', 'Ring')
+benchmark_autocorrelation(results, f'RingResults/{d}d{afstring}', 'Ring')
 
 print("Ring distribution benchmark complete. Check the output directory for plots.")
