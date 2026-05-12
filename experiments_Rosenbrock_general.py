@@ -221,8 +221,8 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     samplers = {
         "Side Move": lambda: side_move(log_density, initial, total_samples, n_walkers=min(dim*20, 200), gamma=1.687),
         "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=min(dim*20, 200), a=2.0),
-        "HMC n=20": lambda: hmc_sst(log_density, initial, total_samples, gradient, epsilon=0.02, L=20, n_chains=1, n_warmup = 1500),
-        "HMC n=5":  lambda: hmc_sst(log_density, initial, total_samples, gradient, epsilon=0.08, L=5,  n_chains=1, n_warmup = 1500),
+        "HMC n=20": lambda: hmc_sst(log_density, initial, total_samples, gradient, epsilon=0.02, L=20, n_chains=min(dim*20, 200), n_warmup = 1500),
+        "HMC n=5":  lambda: hmc_sst(log_density, initial, total_samples, gradient, epsilon=0.08, L=5,  n_chains=min(dim*20, 200), n_warmup = 1500),
         "Hamiltonian Walk Move n=20": lambda: hamiltonian_walk_move_sst(
             gradient, potential, initial, total_samples,
             n_chains_per_group=min(dim*10, 100), epsilon=0.02, n_leapfrog=20, beta=1.0, n_warmup = 1500
@@ -455,7 +455,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
 
 # Run the benchmark for the Rosenbrock distribution
 # Note: You need to have the sampler functions (side_move, stretch_move, etc.) defined elsewhere
-results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(dim=d, n_samples= 30000, burn_in=2000, sigma=0.7, affine = af)
+results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(dim=d, n_samples= 50000, burn_in=5000, sigma=0.7, affine = af)
 
 if transform['affine']:
     afstring = '_af'
