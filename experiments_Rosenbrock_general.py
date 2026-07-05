@@ -13,9 +13,9 @@ import jax.numpy as jnp
 rc('text', usetex=False)
 
 import argparse
-from samplers import side_move, stretch_move
-from sampler_chees import hmc_chees
-from sampler_peachees import hamiltonian_walk_chees
+from samplers.samplers import side_move, stretch_move
+from samplers.sampler_chees import hmc_chees
+from samplers.sampler_peachees import hamiltonian_walk_chees
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 
 
@@ -36,6 +36,7 @@ def parse_args():
     )
     parser.add_argument("--no-report", action="store_true")
     parser.add_argument("--no-plots", action="store_true")
+    parser.add_argument("--cond")
 
 
     return parser.parse_args()

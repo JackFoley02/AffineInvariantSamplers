@@ -12,10 +12,10 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 rc('text', usetex=False)
 
 import argparse
-from sampler_nuts import hmc_nuts
-from sampler_peachees import hamiltonian_walk_chees
-from sampler_chees import hmc_chees
-from samplers import stretch_move
+from samplers.sampler_nuts import hmc_nuts
+from samplers.sampler_peachees import hamiltonian_walk_chees
+from samplers.sampler_chees import hmc_chees
+from samplers.samplers import stretch_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 
 

@@ -6,9 +6,9 @@ import time
 import os
 import argparse
 import json
-from samplers import side_move, stretch_move
-from sampler_chees import hmc_chees
-from sampler_peachees import hamiltonian_walk_chees
+from samplers.samplers import side_move, stretch_move
+from samplers.sampler_chees import hmc_chees
+from samplers.sampler_peachees import hamiltonian_walk_chees
 import jax
 import jax.numpy as jnp
 from plotTools.benchmark_autocorrelation import benchmark_autocorrelation
