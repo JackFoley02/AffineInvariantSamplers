@@ -6,11 +6,10 @@ import time
 import os
 import argparse
 import json
-from samplers import side_move, stretch_move
+from sampler_nuts import hmc_nuts
+from samplers import stretch_move
 from sampler_chees import hmc_chees
 from sampler_peachees import hamiltonian_walk_chees
-import jax
-import jax.numpy as jnp
 from plotTools.benchmark_autocorrelation import benchmark_autocorrelation
 from plotTools.benchmark_corner import benchmark_corner
 from plotTools.benchmark_trends import benchmark_trends
@@ -18,7 +17,6 @@ from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 
-#parser to identify the number of dimensions from command line
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Benchmark tests of different MCMC sampling algorithms, applied to a multidimensional Rosenbrock distribution. # of dimensions MUST be even.'
@@ -36,7 +34,8 @@ def parse_args():
     )
     parser.add_argument("--no-report", action="store_true")
     parser.add_argument("--no-plots", action="store_true")
-
+    parser.add_argument("--gpu", type = int, default=None)
+    parser.add_argument('--cond', type = int, default = 50.0)
 
     return parser.parse_args()
 
@@ -44,8 +43,17 @@ def parse_args():
 args = parse_args()
 d = args.dim
 af = args.af
+gpu = args.gpu
+cond = args.cond
 
-def create_high_dim_precision(dim, condition_number=100):
+if gpu is not None:
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
+
+#importing JAX after setting default device
+import jax
+import jax.numpy as jnp
+
+def create_high_dim_precision(dim, condition_number=1.0):
     """Create a high-dimensional precision matrix with given condition number."""
     # Create random eigenvectors (orthogonal matrix)
     np.random.seed(42)  # For reproducibility
@@ -63,7 +71,7 @@ def create_high_dim_precision(dim, condition_number=100):
     
     return precision
 
-def affine_transform(dim, max_dim=128, seed=1234, trans_scale=2.0, cond=50.0):
+def affine_transform(dim, max_dim=128, seed=1234, trans_scale=2.0, cond=cond):
     rng = np.random.default_rng(seed)
 
     B_full = rng.uniform(-trans_scale, trans_scale, size=max_dim)
@@ -100,12 +108,12 @@ def affine_transform(dim, max_dim=128, seed=1234, trans_scale=2.0, cond=50.0):
     return A, B, Ainv
 
 
-def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=100, affine = False):
+def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=cond, affine = False):
     """
     Benchmark different MCMC samplers on a high-dimensional Gaussian.
     """
     # Create precision matrix (inverse covariance)
-    precision_matrix = create_high_dim_precision(dim, condition_number)
+    precision_matrix = create_high_dim_precision(dim, 1)
     
     # Compute covariance matrix for reference (needed for evaluation)
     cov_matrix = np.linalg.inv(precision_matrix)
@@ -117,7 +125,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=1
 
 
     if affine:
-        A, B, Ai = affine_transform(dim, trans_scale=2, cond = 50)
+        A, B, Ai = affine_transform(dim, trans_scale=2, cond = condition_number)
     else:
         A = np.eye(dim)
         B = np.zeros(dim)
@@ -190,12 +198,14 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=1
     
     # Define samplers to benchmark - adjust parameters for high-dimensional case
     samplers = {
-        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=260, a=1.0+2.151/np.sqrt(dim), n_thin = 10),
-        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=260, n_warmup = 5000, max_L = 10000, n_thin = 10),
+        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=260, n_warmup = 1000, n_thin = 10, max_tree_depth = 13),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial, total_samples,
-            n_walkers = 260, epsilon=0.1, L=10, n_warmup = 5000, max_L = 10000, n_thin = 10
-        ),
+            n_walkers = 260, epsilon=0.1, L=10, n_warmup = 1000, max_L = 1000, n_thin = 10
+        ),        
+        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=260, a=1.0+2.151/np.sqrt(dim), n_thin = 10),
+        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=260, n_warmup = 1000, max_L = 1000, n_thin = 10),
+ 
     }
     for name, sampler_func in samplers.items():
         print(f"Running {name}...")
@@ -309,9 +319,9 @@ for i, name in enumerate(samplers):
                      color = colors[i], linestyle = ':', label = f"{name}: epsilon = {np.round(results[name]['epsilon'], 3)}")
 
 
-outdir = f"GaussianResults/{d}d{afstring}"
-corner_dir = f"GaussianResults/{d}d{afstring}/corner"
-trends_dir = f"GaussianResults/{d}d{afstring}/trends"
+outdir = f"GaussianResultsM/{d}d{afstring}"
+corner_dir = f"GaussianResultsM/{d}d{afstring}/corner"
+trends_dir = f"GaussianResultsM/{d}d{afstring}/trends"
 os.makedirs(outdir, exist_ok=True)
 os.makedirs(corner_dir, exist_ok=True)
 os.makedirs(trends_dir, exist_ok=True)
@@ -322,7 +332,7 @@ plt.ylabel('Epsilon value')
 plt.ylim(0, 1.8)
 plt.xlim(left = 0.0)
 plt.legend()
-plt.savefig(f'GaussianResults/{d}d{afstring}/StepSize.pdf')
+plt.savefig(f'GaussianResultsM/{d}d{afstring}/StepSize.pdf')
 plt.close()
 #pickling output to compile locally
 def save_light_results(results, transform, outdir, dim, af):
@@ -389,13 +399,13 @@ save_light_results(
 if not args.no_plots:
 
     benchmark_corner(results, corner_dir, thin = 10, transform=transform)
-    benchmark_trends(results, trends_dir, 'Gaussian')
-    benchmark_autocorrelation(results, outdir, 'Gaussian')
+    benchmark_trends(results, trends_dir, 'GaussianM')
+    benchmark_autocorrelation(results, outdir, 'GaussianM')
 
 if not args.no_report:
     from generate_report import SamplerReport
 
-    report = SamplerReport(results=results, label = 'Gaussian', transform=transform)
-    report.compile_pdf(texname = os.path.join(outdir, f'Gaussian_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
+    report = SamplerReport(results=results, label = 'GaussianM', transform=transform)
+    report.compile_pdf(texname = os.path.join(outdir, f'GaussianM_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
 
 print("Gaussian distribution benchmark complete. Check the output directory for plots.")

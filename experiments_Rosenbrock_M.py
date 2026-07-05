@@ -8,14 +8,14 @@ from matplotlib import rc
 import os
 import json
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-import jax
-import jax.numpy as jnp
+
 rc('text', usetex=False)
 
 import argparse
-from samplers import side_move, stretch_move
-from sampler_chees import hmc_chees
+from sampler_nuts import hmc_nuts
 from sampler_peachees import hamiltonian_walk_chees
+from sampler_chees import hmc_chees
+from samplers import stretch_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 
 
@@ -36,7 +36,8 @@ def parse_args():
     )
     parser.add_argument("--no-report", action="store_true")
     parser.add_argument("--no-plots", action="store_true")
-
+    parser.add_argument("--gpu", type = int, default=None)
+    parser.add_argument('--cond', type = int, default = 50)
 
     return parser.parse_args()
 
@@ -44,12 +45,20 @@ def parse_args():
 args = parse_args()
 d = args.dim
 af = args.af
+gpu = args.gpu
+cond = args.cond
 
+if gpu is not None:
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
+
+#import jax after setting default CUDA device 
+import jax
+import jax.numpy as jnp
 
 if (d % 2) != 0:
     raise ValueError('# of dimensions must be an even number.')
 
-def affine_transform(dim, max_dim=128, seed=4321, trans_scale=2.0, cond=50.0):
+def affine_transform(dim, max_dim=128, seed=4321, trans_scale=2.0, cond=cond):
     rng = np.random.default_rng(seed)
 
     B_full = rng.uniform(-trans_scale, trans_scale, size=max_dim)
@@ -111,7 +120,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     if affine: #Apply an affine transformation 
         #i.e. y = Ax + b
         #Affine-invariant samplers should behave equally well under any rotation, which is what this tests
-        A, B, Ai = affine_transform(dim = dim, trans_scale=2.0, cond=50) 
+        A, B, Ai = affine_transform(dim = dim, trans_scale=2.0, cond=cond) 
         AiT = Ai.T
     else:
         A = np.eye(dim) #identity matrix that is dim x dim
@@ -183,13 +192,6 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         R = Rosenbrock_paired(u) #solve for the Rosenbrock Distribution in its rest frame at point/vector u = (x, y)
         logden = -0.5 * R / (sigma**2)
         return logden
-    def potential(z):
-        """potential energy, V(z) = -log(p(z)) of the Rosenbrock distribution (p(z))"""
-        z = np.asarray(z)
-        u = (z - B) @ AiT
-        R = Rosenbrock_paired(u)
-        pot = 0.5 * R / (sigma**2)
-        return pot
 
     # Define the gradient of the negative log density
     def gradient(z):
@@ -213,6 +215,17 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
         return -0.5 * R / sigma**2
 
+    def sample_initial_ensemble(n_chains, seed=12345):
+        rng = np.random.default_rng(seed + dim + 1000 * int(affine))
+        u = np.empty((n_chains, dim), dtype=float)
+        x_odd = a + sigma * rng.standard_normal((n_chains, dim // 2))
+        x_even = x_odd**2 + (sigma / np.sqrt(b)) * rng.standard_normal((n_chains, dim // 2))
+        u[:, 0::2] = x_odd
+        u[:, 1::2] = x_even
+
+        if affine:
+            return u @ A.T + B
+        return u
 
     u0 = np.ones(dim) + (sigma / np.sqrt(dim)) * np.random.randn(dim)
 
@@ -228,12 +241,20 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     total_samples = n_samples + burn_in
     
     # Define samplers to benchmark - parameters tuned for the ring distribution
+    n_hmc_chains = 200
+    hmc_initial = sample_initial_ensemble(n_hmc_chains)
+    n_hwm_walkers = 200
+    hwm_initial = sample_initial_ensemble(n_hwm_walkers, seed=54321)
+
     samplers = {
-        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.02, L=20, n_chains=260, n_warmup = 10000, max_L = 1000, n_thin = 10),
+        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=260, n_warmup = 1000, n_thin = 10, max_tree_depth = 13),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial, total_samples,
-            n_walkers = 260, epsilon=0.02, L=20, n_warmup = 10000, max_L = 1000, n_thin = 10
-        ),
+            n_walkers = 260, epsilon=0.1, L=10, n_warmup = 1000, max_L = 1000, n_thin = 10
+        ),        
+        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=260, a=1.0+2.151/np.sqrt(dim), n_thin = 10),
+        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=260, n_warmup = 1000, max_L = 1000, n_thin = 10),
+ 
     }
 
     
@@ -443,7 +464,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
 
     fig.suptitle("Sampler projections onto first two Rosenbrock dimensions", y=0.995)
     fig.tight_layout()
-    fig.savefig(f"RosenbrockResults/{dim}d{rotstring}/Rosenbrock_overlay_first2.png", dpi=220, bbox_inches="tight")
+    fig.savefig(f"RosenbrockResultsM/{dim}d{rotstring}/Rosenbrock_overlay_first2.png", dpi=220, bbox_inches="tight")
     plt.close()
     colors = ['black', 'black', 'purple', 'blue', 'green', 'y', 'orange', 'red']
 
@@ -462,7 +483,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
     plt.ylim(0, 1)
     plt.xlim(0, results[samplers[0]]['n_warmup'])
     plt.legend()
-    plt.savefig(f'RosenbrockResults/{d}d{rotstring}/StepSize.pdf')
+    plt.savefig(f'RosenbrockResultsM/{d}d{rotstring}/StepSize.pdf')
     plt.close()
 
 
@@ -472,7 +493,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
 
 # Run the benchmark for the Rosenbrock distribution
 # Note: You need to have the sampler functions (side_move, stretch_move, etc.) defined elsewhere
-results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(dim=d, n_samples= 100000, burn_in=10000, sigma=0.7, affine = af)
+results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(dim=d, n_samples= 10000, burn_in=1000, sigma=0.7, affine = af)
 
 if transform['affine']:
     afstring = '_af'
@@ -481,9 +502,9 @@ else:
 
 
 #make directories
-outdir = f"RosenbrockResults/{d}d{afstring}"
-corner_dir = f"RosenbrockResults/{d}d{afstring}/corner"
-trends_dir = f"RosenbrockResults/{d}d{afstring}/trends"
+outdir = f"RosenbrockResultsM/{d}d{afstring}"
+corner_dir = f"RosenbrockResultsM/{d}d{afstring}/corner"
+trends_dir = f"RosenbrockResultsM/{d}d{afstring}/trends"
 os.makedirs(outdir, exist_ok=True)
 os.makedirs(corner_dir, exist_ok=True)
 os.makedirs(trends_dir, exist_ok=True)
@@ -559,13 +580,13 @@ if not args.no_plots:
 
     plot_Rosenbrock_results(results, log_density, dim=d, sigma=0.7, transform = transform)
     benchmark_corner(results, corner_dir, thin = 10,  overlay_rosenbrock=overlay_rosenbrock, transform=transform)
-    benchmark_trends(results, trends_dir, 'RosenbrockTuned')
-    benchmark_autocorrelation(results, outdir, 'RosenbrockTuned')
+    benchmark_trends(results, trends_dir, 'RosenbrockM')
+    benchmark_autocorrelation(results, outdir, 'RosenbrockM')
 
 if not args.no_report:
     from generate_report import SamplerReport
 
-    report = SamplerReport(results=results, label = 'RosenbrockTuned', transform=transform, overlay=overlay_rosenbrock)
-    report.compile_pdf(texname = os.path.join(outdir, f'RosenbrockTuned_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
+    report = SamplerReport(results=results, label = 'RosenbrockM', transform=transform, overlay=overlay_rosenbrock)
+    report.compile_pdf(texname = os.path.join(outdir, f'RosenbrockM_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
 
 print("Rosenbrock distribution benchmark complete. Check the output directory for plots.")

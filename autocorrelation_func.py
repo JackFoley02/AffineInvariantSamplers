@@ -18,22 +18,45 @@ def autocorrelation_fft(x, max_lag=None):
     acf : array
         Autocorrelation function values
     """
+    x = np.asarray(x, dtype=float)
     n = len(x)
     if max_lag is None:
         max_lag = min(n // 3, 20000)  # Cap at 20000 to prevent slow computation
+
+    if n == 0 or max_lag <= 0:
+        return np.array([], dtype=float)
     
     # Remove mean and normalize
     x_norm = x - np.mean(x)
     var = np.var(x_norm)
-    x_norm = x_norm / np.sqrt(var)
+
+    if (not np.isfinite(var)) or var <= 0.0:
+        acf = np.full(min(max_lag, n), np.nan, dtype=float)
+        if len(acf) > 0:
+            acf[0] = 1.0
+        return acf
     
     # Compute autocorrelation using FFT
     # Pad the signal with zeros to avoid circular correlation
     fft = np.fft.fft(x_norm, n=2*n)
     acf = np.fft.ifft(fft * np.conjugate(fft))[:n]
-    acf = acf.real / n  # Normalize
+    acf = acf.real
+
+    # Normalize by acf[0] rather than by n*var to ensure acf[0] == 1.
+    # The biased normalization is intentional here; it is stable for IAT
+    # windowing and avoids large noisy tail corrections.
+    if acf[0] <= 0.0 or not np.isfinite(acf[0]):
+        return np.full(min(max_lag, n), np.nan, dtype=float)
+    acf = acf / acf[0]
     
     return acf[:max_lag]
+
+def _auto_window(taus, c):
+    """Return the first index satisfying Sokal's self-consistent window."""
+    m = np.arange(len(taus)) < c * taus
+    if np.any(~m):
+        return int(np.argmin(m))
+    return None
 
 def integrated_autocorr_time(x, M=5, c=10):
     """
@@ -45,9 +68,11 @@ def integrated_autocorr_time(x, M=5, c=10):
     x : array
         1D array of samples
     M : int, default=5
-        Window size multiplier (typically 5-10)
+        Deprecated compatibility argument. The estimate now uses the
+        self-consistent window controlled by c.
     c : int, default=10
-        Maximum lag cutoff for window determination
+        Window criterion. A larger value is more conservative and requires
+        more samples before reporting a finite estimate.
         
     Returns:
     --------
@@ -58,57 +83,41 @@ def integrated_autocorr_time(x, M=5, c=10):
     ess : float
         Effective sample size
     """
+    x = np.asarray(x, dtype=float)
     n = len(x)
-    orig_x = x.copy()
-    
-    # Initial pairwise reduction if needed
-    k = 0
-    max_iterations = 10  # Prevent infinite loop
-    
-    while k < max_iterations:
-        # Calculate autocorrelation function
-        acf = autocorrelation_fft(x)
-        
-        # Calculate integrated autocorrelation time with self-consistent window
-        tau = 1.0  # Initialize with the first term
-        
-        # Find the window size where window <= M * tau
-        for window in range(1, len(acf)):
-            # Update tau with this window
-            tau_window = 1.0 + 2.0 * sum(acf[1:window+1])
-            
-            # Check window consistency: window <= M*tau
-            if window <= M * tau_window:
-                tau = tau_window
-            else:
-                break
-        
-        # If we have a robust estimate, we're done
-        if n >= c * tau:
-            # Scale tau back to the original time scale: tau_0 = 2^k * tau_k
-            tau = tau * (2**k)
-            break
-            
-        # If we don't have a robust estimate, perform pairwise reduction
-        k += 1
-        n_half = len(x) // 2
-        x_new = np.zeros(n_half)
-        for i in range(n_half):
-            if 2*i + 1 < len(x):
-                x_new[i] = 0.5 * (x[2*i] + x[2*i+1])
-            else:
-                x_new[i] = x[2*i]
-        x = x_new
-        n = len(x)
-    
-    # If we exited without a robust estimate, compute one final estimate
-    if k >= max_iterations or n < c * tau:
-        acf = autocorrelation_fft(orig_x)
-        tau_reduced = 1.0 + 2.0 * sum(acf[1:min(len(acf), int(M)+1)])
-        # Scale tau back to the original time scale
-        tau = tau_reduced * (2**k)
-    
-    # Calculate effective sample size using original series length
-    ess = len(orig_x) / tau
+
+    if n < 2:
+        acf = np.full(n, np.nan, dtype=float)
+        return np.nan, acf, 0.0
+
+    acf = autocorrelation_fft(x)
+
+    if len(acf) < 2 or not np.all(np.isfinite(acf[:2])):
+        return np.nan, acf, 0.0
+
+    # tau[t] is the IAT estimate using lags 0..t:
+    # tau = 1 + 2 * sum_{lag=1}^t rho_lag.
+    taus = 2.0 * np.cumsum(acf) - 1.0
+
+    # Negative or non-finite partial sums indicate that the noisy tail has
+    # taken over; stop before trusting it.
+    valid = np.isfinite(taus) & (taus > 0.0)
+    if not np.any(valid):
+        return np.nan, acf, 0.0
+
+    last_valid = int(np.where(valid)[0][-1])
+    window = _auto_window(taus[: last_valid + 1], c)
+
+    if window is None or window <= 0:
+        return np.nan, acf, 0.0
+
+    tau = float(taus[window])
+
+    # The estimate is not trustworthy unless the chain is many autocorrelation
+    # times long. Returning NaN is better than manufacturing a capped value.
+    if n < c * tau:
+        return np.nan, acf, 0.0
+
+    ess = n / tau
     
     return tau, acf, ess

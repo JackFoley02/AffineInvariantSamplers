@@ -7,6 +7,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from typing import NamedTuple
+from numpyro.infer import HMC, MCMC
 
 
 #Helper Functions
@@ -36,98 +37,90 @@ def make_batched_fns(log_prob_sca):
     
     return log_prob, grad_log_prob, grad_U
 
-def leapfrog(q, p, grad_U, eps, L):
-    """
-    Helper Function to perform leapfrog integration that is JAX/JIT compatible
+def tune_numpyro_mass_matrix(
+    log_prob_sca,
+    initial,
+    n_warmup=10000,
+    epsilon=0.001,
+    L=20,
+    dense_mass=True,
+    target_accept=0.9,
+    seed=0,
+    progress_bar=True,
+):
+    def potential_fn(q):
+        return -log_prob_sca(q)
 
-    Arguments:
-        q:
-            current position vector within the target distribution
-        p: 
-            associated conjugate momenta of the positions in the target distribution.
-        grad_U:
-            gradient of potential energy function required for advancing the momentum during the leapfrog integration
-        eps:
-            the 'time step' length
-        L:
-            the number of leapfrog integrations to perform
-    """
-    #advance p by half step
+    kernel = HMC(
+        potential_fn=potential_fn,
+        step_size=epsilon,
+        trajectory_length=epsilon * L,
+        adapt_step_size=True,
+        adapt_mass_matrix=True,
+        dense_mass=dense_mass,
+        target_accept_prob=target_accept,
+    )
+
+    mcmc = MCMC(kernel, num_warmup=n_warmup, num_samples=1, progress_bar=progress_bar)
+    mcmc.run(jax.random.PRNGKey(seed), init_params=jnp.asarray(initial))
+
+    adapt = mcmc.last_state.adapt_state
+
+    invM = jnp.asarray(adapt.inverse_mass_matrix)
+    mass_sqrt = jnp.asarray(adapt.mass_matrix_sqrt)
+    eps = jnp.asarray(adapt.step_size)
+
+    q_last = jnp.asarray(mcmc.last_state.z)
+
+    return q_last, eps, invM, mass_sqrt
+
+def kinetic_energy(p, invM):
+    return 0.5 * jnp.einsum("bi,ij,bj->b", p, invM, p)
+
+def velocity(p, invM):
+    return p @ invM.T
+
+def draw_momentum(key, q_shape, mass_sqrt):
+    z = jax.random.normal(key, shape=q_shape)
+    return z @ mass_sqrt.T
+
+def leapfrog(q, p, grad_U, eps, L, invM):
     p = p - 0.5 * eps * grad_U(q)
 
-    #begin integration chain
-    #defined for loop body to be compatible w/ JAX
     def fl_body(i, state):
-        q, p = state #define current position and momenta
+        q, p = state
+        q = q + eps * velocity(p, invM)
+        p = jax.lax.cond(
+            i < L - 1,
+            lambda p: p - eps * grad_U(q),
+            lambda p: p,
+            p,
+        )
+        return q, p
 
-        #advance the position forward one step:
-        q = q + eps * p
-
-        #Momentum update, w/ JAX condition to skip final momentum update step:
-        p = jax.lax.cond(i < L - 1, lambda p: p - eps * grad_U(q), lambda p:p, p)
-        #JAX if statements are contained in these cond objects, and have the following syntax:
-        #jax.lax.cond(condition, true_func, false_func, operand)
-        #condition: condition to evaluate
-        #true_func: if condition is true, evaluate true_func using operand
-        #false_func: if condition is false, evaluate false_func using operand
-        #operand: the variable/value to perform operations with
-
-        #finally, return the state of the main loop body
-        return (q, p)
-    
-    #run loop to update q and p from their initial states:
     q, p = jax.lax.fori_loop(0, L, fl_body, (q, p))
-
-    #perform final momentum integration step:
     p = p - 0.5 * eps * grad_U(q)
 
     return q, p
 
-def hmc_step(key, q, log_prob, grad_U, eps, L):
-    """
-    Helper function to run each individual HMC step. Vectorized for all chains.
-
-    Arguments:
-        key:
-            PRNG key
-        q: 
-            position vector within the target distribution. Has shape (n_chains, dim)
-        log_prob:
-            batched log probability distribution
-        grad_U:
-            batched negative gradient of log_prob
-        eps:
-            epsilon, 'time step'/integration length parameter
-        L:
-            number of leapfrog steps
-        
-    """
-    n_chains, dim = q.shape #grab dimensions and number of chains here
-
-    #Split JAX randomization keys
+def hmc_step(key, q, log_prob, grad_U, eps, L, invM, mass_sqrt):
+    n_chains, dim = q.shape
     key_p, key_accept = jax.random.split(key)
 
-    #Draw random momentum sample
-    p0 = jax.random.normal(key_p, shape = q.shape)
+    p0 = draw_momentum(key_p, q.shape, mass_sqrt)
 
-    #Compute energies of current step
     U_current = -log_prob(q)
-    K_current = 0.5 * jnp.sum(p0**2, axis = 1)
+    K_current = kinetic_energy(p0, invM)
 
-    #generate leapfrog step proposal
-    q_prop, p_prop = leapfrog(q, p0, grad_U, eps=eps, L=L)
+    q_prop, p_prop = leapfrog(q, p0, grad_U, eps=eps, L=L, invM=invM)
 
-    #return velocity for ChEES
-    vel = p_prop
+    vel = velocity(p_prop, invM)
 
-    #flip momentum for reversibility/detailed balance
     p_prop = -p_prop
 
-    #Compute new energies at the proposal position
     U_prop = -log_prob(q_prop)
-    K_prop = 0.5 * jnp.sum(p_prop**2, axis = 1)
+    K_prop = kinetic_energy(p_prop, invM)
 
-    #Generate Metropolis acceptance probability with some protection against discontinuities
     finite = (
         jnp.isfinite(U_current)
         & jnp.isfinite(K_current)
@@ -144,12 +137,9 @@ def hmc_step(key, q, log_prob, grad_U, eps, L):
     accept_prob = jnp.exp(log_accept_prob)
     accept_prob = jnp.where(jnp.isfinite(accept_prob), accept_prob, 0.0)
 
-    #Draw some uniform random numbers for each walker
-    log_uniform = jnp.log(jax.random.uniform(key_accept, shape = (n_chains,)))
-
+    log_uniform = jnp.log(jax.random.uniform(key_accept, shape=(n_chains,)))
     accept = log_uniform < log_accept_prob
 
-    #select the new states, leave states unchanged if acceptance not met for the particular chain:
     q_new = jnp.where(accept[:, None], q_prop, q)
 
     return q_new, accept, accept_prob, log_accept_prob, q_prop, vel
@@ -181,7 +171,7 @@ def update_da( #update the dual averaging state
       gamma = 0.05,
       t0 = 10,
       kappa = 0.75,
-      emin = 1e-4,
+      emin = 1e-5,
       emax = 0.1,
 
     ):
@@ -421,7 +411,7 @@ def stretch_warmup_step(key, q0, log_prob, a = 2):
 
     return q, accept
 
-def stretch_warmup(key, q0, log_prob, n_steps = 100, a = 2.0):
+def stretch_warmup(key, q0, log_prob, n_steps = 50, a = 2.0):
     """Perform the full 50 step stretch-move warmup algorithm
     
     Arguments:
@@ -456,6 +446,7 @@ def stretch_warmup(key, q0, log_prob, n_steps = 100, a = 2.0):
 
     return(key, q_final, accept_history)
         
+
 def hmc_warmup(
         key,
         q0,
@@ -464,10 +455,13 @@ def hmc_warmup(
         eps0,
         L0,
         n_warmup,
+        invM,
+        mass_sqrt,
         max_L = 5000,
         target_accept = 0.651,
-        emin = 1e-4,
-        emax = 0.1
+        emin = 1e-5,
+        emax = 0.1,
+        freeze_eps = True
 ):
     """
     Function to perform the warmup step size and integration length tuning
@@ -489,15 +483,25 @@ def hmc_warmup(
         key, subkey = jax.random.split(key) #splitting key for randomness reproducibility
 
         #perform the hmc integration step
-        q_new, accept, accept_prob, log_accept_prob, q_prop, vel = hmc_step(subkey, q, log_prob, grad_U, eps, current_L)
-         
+        q_new, accept, accept_prob, log_accept_prob, q_prop, vel = hmc_step(
+    subkey, q, log_prob, grad_U, eps, current_L, invM, mass_sqrt
+)         
         #determine mean acceptance probability from this integration step:
         mean_accept = jnp.mean(accept_prob)
         mean_accept = jnp.where(jnp.isfinite(mean_accept), mean_accept, 0.0)
 
         #Update dual averaging state using the new positions and acceptance probability
-        da_new = update_da(da, mean_accept, log_eps0, target_accept=target_accept, emin=emin, emax=emax)
-
+        if freeze_eps:
+            da_new = da
+        else:
+            da_new = update_da(
+                da,
+                mean_accept,
+                log_eps0,
+                target_accept=target_accept,
+                emin=emin,
+                emax=emax,
+    )
         #update ChEES state
         q_prop_safe = jnp.where(jnp.isfinite(q_prop), q_prop, q)
         vel_safe = jnp.where(jnp.isfinite(vel), vel, 0.0)
@@ -524,8 +528,13 @@ def hmc_warmup(
          length = n_warmup #do this stepping for this many steps
     )
 
-    final_eps = jnp.exp(da_final.log_eps_bar) #store final epsilon value
-    final_eps = jnp.clip(final_eps, emin, emax)
+    if freeze_eps:
+        final_eps = jnp.asarray(eps0)
+    else:
+        final_eps = jnp.exp(da_final.log_eps_bar)  
+
+        final_eps = jnp.clip(final_eps, emin, emax)
+
     final_T = jnp.exp(chees_final.log_T_bar)
     raw_final_L = jnp.ceil(final_T / final_eps)
 
@@ -550,19 +559,20 @@ def hmc_sample(
     L,
     n_samples,
     n_thin,
+    invM,
+    mass_sqrt,
 ):
     def one_step(carry, _):
         key, q = carry
         key, subkey = jax.random.split(key)
 
         q_new, accept, *_ = hmc_step(
-            subkey, q, log_prob, grad_U, eps, L
+            subkey, q, log_prob, grad_U, eps, L, invM, mass_sqrt
         )
 
         return (key, q_new), accept
 
     def one_saved_sample(carry, _):
-        # Run n_thin HMC transitions, but only keep the final q
         (key, q), accepts_block = jax.lax.scan(
             one_step,
             carry,
@@ -570,9 +580,7 @@ def hmc_sample(
             length=n_thin,
         )
 
-        # Store only one sample per block
         accept_block = jnp.mean(accepts_block, axis=0)
-
         return (key, q), (q, accept_block)
 
     (key, q_final), (samples, accepts) = jax.lax.scan(
@@ -583,19 +591,20 @@ def hmc_sample(
     )
 
     return key, samples, accepts
-
+    
 def hmc_chees(
         log_prob,
         initial,
         n_samples,
         epsilon = 0.1,
         L = 10,
-        n_chains = 2,
+        n_chains = 1,
         n_thin = 1,
-        n_warmup = 1000,
+        n_warmup = 10000,
         target_accept = 0.651,
         max_L = 5000,
-        seed = 0
+        seed = 0,
+        freeze_eps = True
 ):
     
     """
@@ -605,29 +614,46 @@ def hmc_chees(
     initial = jnp.asarray(initial, dtype = float)
     dim = initial.shape[0]
 
-    #batching probability density functions for JAX
-    log_prob, grad_log_prob, grad_U = make_batched_fns(log_prob_sca=log_prob)
+    log_prob_sca = log_prob
+    log_prob, grad_log_prob, grad_U = make_batched_fns(log_prob_sca=log_prob_sca)
 
-    #generate and split JAX key
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
 
-    #generate initial walker positions
-    q0 = jnp.tile(initial[None, :], (n_chains, 1))
-    #add some randomness to the initial positions.
-    q0 = q0 + 0.1 * jax.random.normal(init_key, shape=(n_chains, dim))
+    q_np, eps_np, invM, mass_sqrt = tune_numpyro_mass_matrix(
+        log_prob_sca=log_prob_sca,
+        initial=initial,
+        n_warmup=n_warmup,
+        epsilon=epsilon,
+        L=L,
+        dense_mass=True,
+        target_accept=target_accept,
+        seed=seed,
+    )
+
+    epsilon = float(eps_np)
+
+
+
+    epsilon = np.clip(epsilon, 1e-5, 0.1)
+
+    print(f"NumPyro epsilon after clipping: {epsilon}")
+
+    q0 = jnp.tile(q_np[None, :], (n_chains, 1))
+    q0 = q0 + 0.01 * jax.random.normal(init_key, shape=(n_chains, dim))
 
     #run 50-step stretch move warmup before ChEES
     key, q0, stretch_accept_hist = stretch_warmup(
         key=key,
         q0=q0,
         log_prob=log_prob,
-        n_steps=50,
+        n_steps=100,
         a=2.0,
     )
 
     print(f"Stretch-Move warmup complete, with acceptance {float(jax.device_get(jnp.round(jnp.mean(stretch_accept_hist), 3)))}")
     
+
     #run warmup loop
     key, q_warm, final_eps, final_L, eps_hist, accept_hist = hmc_warmup(
          key=key,
@@ -639,6 +665,9 @@ def hmc_chees(
          n_warmup=n_warmup,
          max_L=max_L,
          target_accept=target_accept,
+         invM=invM,
+         mass_sqrt=mass_sqrt,
+         freeze_eps = freeze_eps
     )
 
     #use warmup loop parameters to run main sampling loop
@@ -650,7 +679,9 @@ def hmc_chees(
          eps = final_eps,
          L = final_L,
          n_samples=n_samples,
-         n_thin=n_thin
+         n_thin=n_thin,
+         mass_sqrt=mass_sqrt,
+         invM=invM
     )
 
     #transpose JAX scan (n_samples, n_chains, dim) to standard ouput shape (n_chains, n_samples, dim)

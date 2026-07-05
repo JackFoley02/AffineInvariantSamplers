@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import os
 from matplotlib import rc
-rc('text', usetex=True)
+rc('text', usetex=False)
 
 #defining functions:
 def normalize(series: np.ndarray) -> np.ndarray:
@@ -61,15 +61,23 @@ def plot_trends(samples: np.ndarray, burnIn: np.ndarray, sig:float = None, outfi
         if idx >= 10:
             break
         stride = max(1, full.shape[1] // 2000)
+        x = np.arange(full.shape[1])
+
         ax.plot(
+            x[::stride],
             full[:, ::stride, idx].T,
             alpha=0.2,
             color='lightgray',
             zorder=1,
             rasterized=True,
-)
-        ax.plot(full[:2, :, idx].T, alpha = 0.7, zorder = 4) #plot first 3 walkers for the indexed variable
+        )
 
+        ax.plot(
+            x,
+            full[:2, :, idx].T,
+            alpha=0.7,
+            zorder=4,
+        )
         ax.axvline(x=burnIn.shape[1], zorder = 5, color = 'black', linestyle = '--') #adding cutoff line to separate burn-in from the rest of the samples
         ax.set_ylabel(labels[idx])
 
