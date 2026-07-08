@@ -245,6 +245,8 @@ def benchmark_corner(results: dict, outdir: str, thin: int = 20, max: int = 3000
         safe_name = name.replace(' ', '_')
 
         for gps, dims in enumerate(groups): #iterate over the groups
+            if gps > 0:
+                break
 
             outfile = os.path.join(outdir, f'corner_{safe_name}_dims{dims[0]}-{dims[-1]}.pdf') #give an explanatory name
             

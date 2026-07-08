@@ -16,6 +16,7 @@ from plotTools.benchmark_trends import benchmark_trends
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
+N_CHAINS = 100
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -198,13 +199,13 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
     
     # Define samplers to benchmark - adjust parameters for high-dimensional case
     samplers = {
-        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=260, n_warmup = 1000, n_thin = 10, max_tree_depth = 13),
+        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=N_CHAINS, n_warmup = 1000, n_thin = 10, max_tree_depth = 13),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial, total_samples,
-            n_walkers = 260, epsilon=0.1, L=10, n_warmup = 1000, max_L = 1000, n_thin = 10
+            n_walkers = N_CHAINS, epsilon=0.1, L=10, n_warmup = 1000, max_L = 1000, n_thin = 10
         ),        
-        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=260, a=1.0+2.151/np.sqrt(dim), n_thin = 10),
-        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=260, n_warmup = 1000, max_L = 1000, n_thin = 10),
+        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=N_CHAINS, a=1.0+2.151/np.sqrt(dim), n_thin = 10),
+        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=N_CHAINS, n_warmup = 1000, max_L = 1000, n_thin = 10),
  
     }
     for name, sampler_func in samplers.items():
