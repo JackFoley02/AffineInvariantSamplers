@@ -123,12 +123,12 @@ def update_chees(
     q_cur: Array,
     q_prop: Array,
     velocity: Array,
-    lr: float = 0.025,
+    lr: float = 0.01,
     beta1: float = 0.0,
     beta2: float = 0.95,
     reg: float = 1e-7,
-    T_min: float = 0.25,
-    T_max: float = 0.5,
+    T_min: float = 0.01,
+    T_max: float = 0.2,
     T_interp: float = 0.9,
 ) -> CHEESState:
     """
@@ -460,8 +460,11 @@ def walk_chees_warmup(
     n_warmup: int,
     max_L: int = 5000,
     target_accept: float = 0.651,
-    emin: float = 1e-4,
+    emin: float = 1e-3,
     emax: float = 1.0,
+    chees_lr: float = 0.01,
+    T_min: float = 0.01,
+    T_max: float = 0.2,
 ):
     """Warmup both epsilon by dual averaging and trajectory time by ChEES."""
     da = init_da_state(eps0)
@@ -485,7 +488,14 @@ def walk_chees_warmup(
             target_accept=target_accept, emin=emin, emax=emax,
         )
         chees_new = update_chees(
-            chees, accept_prob=accept_prob, q_cur=q, q_prop=q_prop, velocity=velocity
+            chees,
+            accept_prob=accept_prob,
+            q_cur=q,
+            q_prop=q_prop,
+            velocity=velocity,
+            lr=chees_lr,
+            T_min=T_min,
+            T_max=T_max,
         )
         return (key, q_new, da_new, chees_new), (eps, mean_accept, current_L)
 
@@ -505,6 +515,9 @@ def walk_chees_warmup(
     print("  final T:", float(jax.device_get(jnp.exp(chees_final.log_T_bar))))
     print("  raw final L:", float(jax.device_get(raw_final_L)))
     print("  final L:", int(jax.device_get(final_L)))
+    print("  warmup L min/max:", int(jax.device_get(jnp.min(L_hist))), int(jax.device_get(jnp.max(L_hist))))
+    if bool(jax.device_get(jnp.any(L_hist >= max_L))):
+        print("  Warning: ChEES hit max_L during warmup; raise emin, lower T_max, or add mass-matrix preconditioning.")
     
     return key, q_final, final_eps, final_L, eps_hist, accept_hist, L_hist
 
@@ -567,6 +580,11 @@ def hamiltonian_walk_chees(
     target_accept: float = 0.651,
     max_L: int = 5000,
     seed: int = 0,
+    emin: float = 1e-3,
+    emax: float = 1.0,
+    chees_lr: float = 0.01,
+    T_min: float = 0.01,
+    T_max: float = 0.2,
 ):
     """
     Affine-invariant Hamiltonian walk move with JAX dual averaging + ChEES.
@@ -613,6 +631,11 @@ def hamiltonian_walk_chees(
         n_warmup=n_warmup,
         max_L=max_L,
         target_accept=target_accept,
+        emin=emin,
+        emax=emax,
+        chees_lr=chees_lr,
+        T_min=T_min,
+        T_max=T_max,
     )
 
     key, samples_jax, acceptance_rates_jax = walk_sample(
@@ -638,5 +661,4 @@ def hamiltonian_walk_chees(
     print("  eps_hist min/max:", np.nanmin(eps_hist), np.nanmax(eps_hist))
     print(accept_hist)
     return samples, acceptance_rates, final_eps_float, np.asarray(eps_hist), parmslist
-
 

@@ -7,6 +7,7 @@ from plotTools.benchmark_autocorrelation import benchmark_autocorrelation
 from matplotlib import rc
 import os
 import json
+import traceback
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 rc('text', usetex=False)
@@ -314,6 +315,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             
         except Exception as e:
             print(f"  Error with {name}: {str(e)}")
+            traceback.print_exc()
             # Create dummy data in case of error
             flat_samples = np.zeros((10, dim))
             acceptance_rates = np.zeros(dim)

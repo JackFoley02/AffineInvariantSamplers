@@ -6,6 +6,7 @@ import time
 import os
 import argparse
 import json
+import traceback
 from samplers.sampler_nuts import hmc_nuts
 from samplers.samplers import stretch_move
 from samplers.sampler_chees import hmc_chees
@@ -245,6 +246,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             ess = np.median(esses)
             tau_std = np.std(taus)
         except:
+            traceback.print_exc()
             tau, ess = np.nan, np.nan
             tau_std = np.nan
 

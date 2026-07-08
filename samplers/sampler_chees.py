@@ -258,12 +258,12 @@ def update_chees(
     q_cur,
     q_prop,
     velocity,
-    lr = 0.025,
+    lr = 0.01,
     beta1 = 0.0,
     beta2 = 0.95,
     reg = 1e-7,
-    T_min = 0.02,
-    T_max = 0.5,
+    T_min = 0.01,
+    T_max = 0.2,
     T_interp = 0.9
 ):
      #Centering position vectors for ChEES criterion
@@ -466,8 +466,11 @@ def hmc_warmup(
         n_warmup,
         max_L = 5000,
         target_accept = 0.651,
-        emin = 1e-4,
-        emax = 0.1
+        emin = 1e-3,
+        emax = 0.1,
+        chees_lr = 0.01,
+        T_min = 0.01,
+        T_max = 0.2
 ):
     """
     Function to perform the warmup step size and integration length tuning
@@ -508,16 +511,19 @@ def hmc_warmup(
             q_cur=q,
             q_prop=q_prop_safe,
             velocity=vel_safe,
+            lr=chees_lr,
+            T_min=T_min,
+            T_max=T_max,
         )
 
         #populate the new carry tuple and pass on the epsilon and acceptance rate (for history)
         new_carry = (key, q_new, da_new, chees_new)
-        new_epshist = (eps, mean_accept)
+        new_epshist = (eps, mean_accept, current_L)
 
         return new_carry, new_epshist
     
     #generate complete warmup integration smoothly with JAX:
-    (key, q_final, da_final, chees_final), (eps_hist, accept_hist) = jax.lax.scan(
+    (key, q_final, da_final, chees_final), (eps_hist, accept_hist, L_hist) = jax.lax.scan(
          step, #perform this function
          (key, q0, da, chees), #starting with these initial conditions
          xs = None, #no need to reference an existing array
@@ -538,6 +544,9 @@ def hmc_warmup(
     print("  final T:", float(jax.device_get(jnp.exp(chees_final.log_T_bar))))
     print("  raw final L:", float(jax.device_get(raw_final_L)))
     print("  final L:", int(jax.device_get(final_L)))
+    print("  warmup L min/max:", int(jax.device_get(jnp.min(L_hist))), int(jax.device_get(jnp.max(L_hist))))
+    if bool(jax.device_get(jnp.any(L_hist >= max_L))):
+        print("  Warning: ChEES hit max_L during warmup; raise emin, lower T_max, or add mass-matrix preconditioning.")
     
     return key, q_final, final_eps, final_L, eps_hist, accept_hist
 
@@ -595,7 +604,12 @@ def hmc_chees(
         n_warmup = 1000,
         target_accept = 0.651,
         max_L = 5000,
-        seed = 0
+        seed = 0,
+        emin = 1e-3,
+        emax = 0.1,
+        chees_lr = 0.01,
+        T_min = 0.01,
+        T_max = 0.2
 ):
     
     """
@@ -639,6 +653,11 @@ def hmc_chees(
          n_warmup=n_warmup,
          max_L=max_L,
          target_accept=target_accept,
+         emin=emin,
+         emax=emax,
+         chees_lr=chees_lr,
+         T_min=T_min,
+         T_max=T_max,
     )
 
     #use warmup loop parameters to run main sampling loop
