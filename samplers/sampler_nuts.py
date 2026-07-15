@@ -187,7 +187,9 @@ def hmc_nuts(
         print("  mean NUTS tree depth:", mean_tree_depth)
     print("  divergences:", n_divergent)
 
-    parmslist = [mean_tree_depth, n_warmup, target_accept, 0.05, 10, 0.75]
+    # Downstream efficiency benchmarks need the actual number of gradient
+    # evaluations, not tree depth (2**round(mean(log2(n))) is biased).
+    parmslist = [mean_num_steps, n_warmup, target_accept, 0.05, 10, 0.75]
 
     return samples, acceptance_rates, final_eps, eps_hist, parmslist
 

@@ -179,15 +179,18 @@ def stretch_move(log_prob, initial, n_samples, n_walkers=20, a=2.0, n_thin = 1):
     acceptance_rates : array
         Acceptance rates for all walkers
     """
-    # Ensure even number of walkers
-    if n_walkers % 2 != 0:
-        n_walkers += 1
-        
-    dim = len(initial)
+    initial = np.asarray(initial, dtype=float)
+    dim = initial.shape[-1]
+    if initial.ndim == 2:
+        walkers = initial.copy()
+        n_walkers = walkers.shape[0]
+        if n_walkers % 2 != 0:
+            raise ValueError("A supplied initial ensemble must have an even number of walkers")
+    else:
+        if n_walkers % 2 != 0:
+            n_walkers += 1
+        walkers = np.tile(initial, (n_walkers, 1)) + 0.1 * np.random.randn(n_walkers, dim)
     half_walkers = n_walkers // 2
-    
-    # Initialize walkers with small random perturbations around initial
-    walkers = np.tile(initial, (n_walkers, 1)) + 0.1 * np.random.randn(n_walkers, dim)
     
     # Vectorized evaluation of initial log probabilities
     walker_log_probs = log_prob(walkers)

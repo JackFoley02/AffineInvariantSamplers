@@ -18,6 +18,7 @@ from samplers.sampler_peachees import hamiltonian_walk_chees
 from samplers.sampler_chees import hmc_chees
 from samplers.samplers import stretch_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
+from experiment_diagnostics import worst_coordinate_ess, evaluation_count, update_seed_manifest
 
 N_CHAINS = 100
 
@@ -40,6 +41,13 @@ def parse_args():
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument("--gpu", type = int, default=None)
     parser.add_argument('--cond', type = int, default = 50)
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--n-samples', type=int, default=10000)
+    parser.add_argument('--burn-in', type=int, default=1000)
+    parser.add_argument('--n-warmup', type=int, default=1000)
+    parser.add_argument('--n-chains', type=int, default=N_CHAINS)
+    parser.add_argument('--n-thin', type=int, default=1,
+                        help='Transitions per saved draw; use 1 for reliable ESS estimates.')
 
     return parser.parse_args()
 
@@ -49,6 +57,7 @@ d = args.dim
 af = args.af
 gpu = args.gpu
 cond = args.cond
+seed = args.seed
 
 if gpu is not None:
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
@@ -96,7 +105,7 @@ def affine_transform(dim, max_dim=128, seed=4321, trans_scale=2.0, cond=cond):
 
     return A, B, Ainv
 
-def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, sigma=0.7, a = 1.0, b = 100.0, affine = False):
+def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, sigma=0.7, a = 1.0, b = 100.0, affine = False, seed=0, n_warmup=1000, n_chains=N_CHAINS, n_thin=1):
     """
     Benchmark different MCMC samplers on a Rosenbrock distribution of any EVEN dimension.
     
@@ -217,24 +226,21 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
         return -0.5 * R / sigma**2
 
-    def sample_initial_ensemble(n_chains, seed=12345):
-        rng = np.random.default_rng(seed + dim + 1000 * int(affine))
+    def sample_initial_ensemble(n_chains, seed):
+        rng = np.random.default_rng(seed)
         u = np.empty((n_chains, dim), dtype=float)
         x_odd = a + sigma * rng.standard_normal((n_chains, dim // 2))
         x_even = x_odd**2 + (sigma / np.sqrt(b)) * rng.standard_normal((n_chains, dim // 2))
         u[:, 0::2] = x_odd
         u[:, 1::2] = x_even
 
-        if affine:
-            return u @ A.T + B
         return u
 
-    u0 = np.ones(dim) + (sigma / np.sqrt(dim)) * np.random.randn(dim)
+    # Draw the same intrinsic ensemble for every condition number, then map
+    # the complete ensemble into sampling coordinates.
+    u0 = sample_initial_ensemble(n_chains=n_chains, seed=seed)
+    initial = u0 @ A.T + B
 
-    if affine:
-        initial = u0 @ A.T + B
-    else:
-        initial = u0
     
     # Dictionary to store results
     results = {}
@@ -243,25 +249,23 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     total_samples = n_samples + burn_in
     
     # Define samplers to benchmark - parameters tuned for the ring distribution
-    n_hmc_chains = 200
-    hmc_initial = sample_initial_ensemble(n_hmc_chains)
-    n_hwm_walkers = 200
-    hwm_initial = sample_initial_ensemble(n_hwm_walkers, seed=54321)
-
     samplers = {
-        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=N_CHAINS, n_warmup = 1000, n_thin = 10, max_tree_depth = 13),
+        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, n_thin=n_thin, max_tree_depth=8, seed=seed, progress_bar=True),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial, total_samples,
-            n_walkers = N_CHAINS, epsilon=0.1, L=10, n_warmup = 1000, max_L = 1000, n_thin = 10
+            n_walkers=n_chains, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
         ),        
-        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=N_CHAINS, a=1.0+2.151/np.sqrt(dim), n_thin = 10),
-        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=N_CHAINS, n_warmup = 1000, max_L = 1000, n_thin = 10),
+        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=n_chains, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
+        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed),
  
     }
 
     
     # Benchmark each sampler with careful error handling
     for name, sampler_func in samplers.items():
+        # stretch_move uses NumPy's legacy global RNG; reseeding here also
+        # makes sampler ordering irrelevant.
+        np.random.seed(seed)
         print(f"Running {name}...")
         start_time = time.time()
         
@@ -273,9 +277,9 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             eps_final = out[2] if len(out) > 2 else 0.0
             eps_hist = out[3] if len(out) > 3 else [0.0, 0.0, 0.0]
             if len(out) > 4:
-                n_leapfrog, n_warmup, target_accept, gamma, t0, kappa = out[4]
+                n_leapfrog, sampler_n_warmup, target_accept, gamma, t0, kappa = out[4]
             else:
-                n_leapfrog = n_warmup = target_accept = gamma = t0 = kappa = None            
+                n_leapfrog = sampler_n_warmup = target_accept = gamma = t0 = kappa = None
             # Apply burn-in: discard the first burn_in samples
             post_burn_in_samples = samples[:, burn_in:, :]
             series = post_burn_in_samples
@@ -293,25 +297,11 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             # Compute autocorrelation for first dimension
             acf = autocorrelation_fft(np.mean(post_burn_in_samples[:, :, 0],axis=0))
             
-            # Compute integrated autocorrelation time for first dimension
-            try:
-                taus = []
-                esses = []
-
-                for k in range(dim):
-                    coord_series = np.mean(post_burn_in_samples[:, :, k], axis=0)
-                    tau_k, _, ess_k = integrated_autocorr_time(coord_series)
-
-                    if np.isfinite(tau_k):
-                        taus.append(tau_k)
-                        esses.append(ess_k)
-
-                tau = np.median(taus)   # robust average
-                ess = np.median(esses)
-                tau_std = np.std(taus)
-            except:
-                tau, ess = np.nan, np.nan
-                print("  Warning: Could not compute integrated autocorrelation time")
+            transform_now = {"affine": affine, "A": A, "B": B}
+            ess, tau, ess_by_coordinate, tau_by_coordinate, ess_valid_fraction = worst_coordinate_ess(
+                post_burn_in_samples, transform_now
+            )
+            tau_std = float(np.nanstd(tau_by_coordinate))
             
         except Exception as e:
             print(f"  Error with {name}: {str(e)}")
@@ -319,12 +309,22 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             # Create dummy data in case of error
             flat_samples = np.zeros((10, dim))
             acceptance_rates = np.zeros(dim)
+            series = np.zeros((1, 0, dim))
+            burn_in_samps = np.zeros((1, 0, dim))
             mean = np.full(dim, np.nan)
             cov = np.full((dim, dim), np.nan)
             acf = np.zeros(100)
-            tau, ess = np.nan, np.nan
+            tau, tau_std, ess = np.nan, np.nan, np.nan
+            ess_by_coordinate = np.full(dim, np.nan)
+            ess_valid_fraction = np.zeros(dim)
+            eps_final, eps_hist = 0.0, np.asarray([])
+            n_leapfrog = sampler_n_warmup = target_accept = gamma = t0 = kappa = None
         
         elapsed = time.time() - start_time
+        n_evaluations, evaluation_type = evaluation_count(
+            name, len(acceptance_rates), n_samples, n_thin, n_leapfrog
+        )
+        ess_per_eval = ess / n_evaluations if np.isfinite(ess) and np.isfinite(n_evaluations) else np.nan
         
         # Store results
         results[name] = {
@@ -339,13 +339,18 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             "tau": tau,
             "tau_std":tau_std,
             "ess": ess,
+            "ess_by_coordinate": ess_by_coordinate,
+            "ess_valid_fraction": ess_valid_fraction,
+            "n_evaluations": n_evaluations,
+            "evaluation_type": evaluation_type,
+            "ess_per_eval": ess_per_eval,
             "time": elapsed,
             "labels": None,
             "sigma":sigma,
             "epsilon":eps_final,
             "epsilon_history":eps_hist,
             "n_leapfrog":n_leapfrog,
-            "n_warmup":n_warmup,
+            "n_warmup":sampler_n_warmup,
             "target_accept":target_accept,
             "gamma":gamma,
             "t0":t0,
@@ -366,7 +371,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
     return results, sigma, log_density, transformation
 
-def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = {'affine':False}):
+def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = {'affine':False}, output_dir=None):
     """Plot comparison of sampler results for ring distribution"""
     samplers = list(results.keys())
 
@@ -468,7 +473,8 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
 
     fig.suptitle("Sampler projections onto first two Rosenbrock dimensions", y=0.995)
     fig.tight_layout()
-    fig.savefig(f"RosenbrockResultsC/{cond}c/Rosenbrock_overlay_first2.png", dpi=220, bbox_inches="tight")
+    output_dir = output_dir or f"RosenbrockResultsC/{cond}c"
+    fig.savefig(os.path.join(output_dir, "Rosenbrock_overlay_first2.png"), dpi=220, bbox_inches="tight")
     plt.close()
     colors = ['black', 'black', 'purple', 'blue', 'green', 'y', 'orange', 'red']
 
@@ -487,7 +493,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
     plt.ylim(0, 1)
     plt.xlim(0, results[samplers[0]]['n_warmup'])
     plt.legend()
-    plt.savefig(f'RosenbrockResultsC/{cond}c/StepSize.pdf')
+    plt.savefig(os.path.join(output_dir, 'StepSize.pdf'))
     plt.close()
 
 
@@ -497,7 +503,11 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
 
 # Run the benchmark for the Rosenbrock distribution
 # Note: You need to have the sampler functions (side_move, stretch_move, etc.) defined elsewhere
-results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(dim=d, n_samples= 10000, burn_in=1000, sigma=0.7, affine = af)
+results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(
+    dim=d, n_samples=args.n_samples, burn_in=args.burn_in, sigma=0.7,
+    affine=af, seed=seed, n_warmup=args.n_warmup, n_chains=args.n_chains,
+    n_thin=args.n_thin
+)
 
 if transform['affine']:
     afstring = '_af'
@@ -506,9 +516,10 @@ else:
 
 
 #make directories
-outdir = f"RosenbrockResultsC/{cond}c"
-corner_dir = f"RosenbrockResultsC/{cond}c/corner"
-trends_dir = f"RosenbrockResultsC/{cond}c/trends"
+base_outdir = f"RosenbrockResultsC/{cond}c"
+outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
+corner_dir = os.path.join(outdir, "corner")
+trends_dir = os.path.join(outdir, "trends")
 os.makedirs(outdir, exist_ok=True)
 os.makedirs(corner_dir, exist_ok=True)
 os.makedirs(trends_dir, exist_ok=True)
@@ -546,6 +557,11 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
             "tau": float(r["tau"]),
             "tau_std": float(r['tau_std']),
             "ess": float(r["ess"]),
+            "ess_by_coordinate": np.asarray(r["ess_by_coordinate"]).tolist(),
+            "ess_valid_fraction": np.asarray(r["ess_valid_fraction"]).tolist(),
+            "n_evaluations": float(r["n_evaluations"]),
+            "evaluation_type": r["evaluation_type"],
+            "ess_per_eval": float(r["ess_per_eval"]),
             "time": float(r["time"]),
             "sigma": float(r["sigma"]),
             "epsilon": float(r["epsilon"]),
@@ -558,6 +574,11 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
 
     metadata = {
         "dim": dim,
+        "seed": seed,
+        "n_samples": args.n_samples,
+        "burn_in": args.burn_in,
+        "n_thin": args.n_thin,
+        "n_chains": args.n_chains,
         "af": af,
         "transform_affine": bool(transform["affine"]),
         "overlay_rosenbrock": overlay,
@@ -577,11 +598,17 @@ save_light_results(
     dim=d,
     af=af,
 )
+update_seed_manifest(
+    base_outdir, seed, outdir,
+    {"dim": d, "condition_number": cond, "affine": af,
+     "n_samples": args.n_samples, "burn_in": args.burn_in,
+     "n_thin": args.n_thin, "n_chains": args.n_chains},
+)
 
 # Plot the results
 if not args.no_plots:
 
-    plot_Rosenbrock_results(results, log_density, dim=d, sigma=0.7, transform = transform)
+    plot_Rosenbrock_results(results, log_density, dim=d, sigma=0.7, transform=transform, output_dir=outdir)
     benchmark_corner(results, corner_dir, thin = 10,  overlay_rosenbrock=overlay_rosenbrock, transform=transform)
     benchmark_trends(results, trends_dir, 'RosenbrockC')
     benchmark_autocorrelation(results, outdir, 'RosenbrockC')

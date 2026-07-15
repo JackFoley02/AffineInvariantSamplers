@@ -596,7 +596,7 @@ def hamiltonian_walk_chees(
       when possible, matching the usual complementary-ensemble requirement.
     """
     initial = jnp.asarray(initial, dtype=float)
-    dim = int(initial.shape[0])
+    dim = int(initial.shape[-1])
 
     if n_walkers < 4:
         n_walkers = 4
@@ -607,8 +607,14 @@ def hamiltonian_walk_chees(
 
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
-    q0 = jnp.tile(initial[None, :], (n_walkers, 1))
-    q0 = q0 + 0.1 * jax.random.normal(init_key, shape=(n_walkers, dim))
+    if initial.ndim == 2:
+        q0 = initial
+        n_walkers = int(initial.shape[0])
+        if n_walkers % 2 != 0:
+            raise ValueError("A supplied initial ensemble must have an even number of walkers")
+    else:
+        q0 = jnp.tile(initial[None, :], (n_walkers, 1))
+        q0 = q0 + 0.1 * jax.random.normal(init_key, shape=(n_walkers, dim))
 
     # 50-step stretch-move warmup before ChEES
     key, q0, stretch_accept_hist = stretch_warmup(
@@ -659,6 +665,5 @@ def hamiltonian_walk_chees(
     print("  final epsilon:", final_eps_float)
     print("  n_leapfrog:", L)
     print("  eps_hist min/max:", np.nanmin(eps_hist), np.nanmax(eps_hist))
-    print(accept_hist)
+    print("  warmup mean acceptance:", float(np.nanmean(accept_hist)))
     return samples, acceptance_rates, final_eps_float, np.asarray(eps_hist), parmslist
-

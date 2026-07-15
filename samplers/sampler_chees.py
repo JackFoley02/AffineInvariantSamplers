@@ -616,8 +616,8 @@ def hmc_chees(
     Vectorized HMC w/ dual-averaging + trajectory length tuning warmup. Written in JAX
     """
     #generating initial conditions
-    initial = jnp.asarray(initial, dtype = float)
-    dim = initial.shape[0]
+    initial = jnp.asarray(initial, dtype=float)
+    dim = int(initial.shape[-1])
 
     #batching probability density functions for JAX
     log_prob, grad_log_prob, grad_U = make_batched_fns(log_prob_sca=log_prob)
@@ -626,10 +626,12 @@ def hmc_chees(
     key = jax.random.key(seed)
     key, init_key = jax.random.split(key)
 
-    #generate initial walker positions
-    q0 = jnp.tile(initial[None, :], (n_chains, 1))
-    #add some randomness to the initial positions.
-    q0 = q0 + 0.1 * jax.random.normal(init_key, shape=(n_chains, dim))
+    if initial.ndim == 2:
+        q0 = initial
+        n_chains = int(initial.shape[0])
+    else:
+        q0 = jnp.tile(initial[None, :], (n_chains, 1))
+        q0 = q0 + 0.1 * jax.random.normal(init_key, shape=(n_chains, dim))
 
     #run 50-step stretch move warmup before ChEES
     key, q0, stretch_accept_hist = stretch_warmup(
