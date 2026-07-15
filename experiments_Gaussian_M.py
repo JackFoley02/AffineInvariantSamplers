@@ -15,6 +15,7 @@ from plotTools.benchmark_autocorrelation import benchmark_autocorrelation
 from plotTools.benchmark_corner import benchmark_corner
 from plotTools.benchmark_trends import benchmark_trends
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
+from experiment_diagnostics import worst_coordinate_ess, evaluation_count, update_seed_manifest
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 N_CHAINS = 100
@@ -38,6 +39,12 @@ def parse_args():
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument("--gpu", type = int, default=None)
     parser.add_argument('--cond', type = int, default = 50.0)
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--n-samples', type=int, default=10000)
+    parser.add_argument('--burn-in', type=int, default=1000)
+    parser.add_argument('--n-warmup', type=int, default=1000)
+    parser.add_argument('--n-chains', type=int, default=N_CHAINS)
+    parser.add_argument('--n-thin', type=int, default=1)
 
     return parser.parse_args()
 
@@ -47,6 +54,7 @@ d = args.dim
 af = args.af
 gpu = args.gpu
 cond = args.cond
+seed = args.seed
 
 if gpu is not None:
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
@@ -110,7 +118,8 @@ def affine_transform(dim, max_dim=128, seed=1234, trans_scale=2.0, cond=cond):
     return A, B, Ainv
 
 
-def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=cond, affine = False):
+def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=cond,
+                       affine=False, seed=0, n_warmup=1000, n_chains=N_CHAINS, n_thin=1):
     """
     Benchmark different MCMC samplers on a high-dimensional Gaussian.
     """
@@ -189,8 +198,9 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
         return result
     
     # Initial state
-    u0 = np.random.multivariate_normal(true_mean, cov_matrix)
-    initial = u0 @ A.T + B if affine else u0
+    rng = np.random.default_rng(seed)
+    u0 = rng.multivariate_normal(true_mean, cov_matrix, size=n_chains)
+    initial = u0 @ A.T + B
     
     # Dictionary to store results
     results = {}
@@ -200,16 +210,17 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
     
     # Define samplers to benchmark - adjust parameters for high-dimensional case
     samplers = {
-        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=N_CHAINS, n_warmup = 1000, n_thin = 10, max_tree_depth = 13),
+        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, n_thin=n_thin, max_tree_depth=13, seed=seed, progress_bar=False),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial, total_samples,
-            n_walkers = N_CHAINS, epsilon=0.1, L=10, n_warmup = 1000, max_L = 1000, n_thin = 10
+            n_walkers=n_chains, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
         ),        
-        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=N_CHAINS, a=1.0+2.151/np.sqrt(dim), n_thin = 10),
-        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=N_CHAINS, n_warmup = 1000, max_L = 1000, n_thin = 10),
+        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=n_chains, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
+        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed),
  
     }
     for name, sampler_func in samplers.items():
+        np.random.seed(seed)
         print(f"Running {name}...")
         start_time = time.time()
 
@@ -219,9 +230,9 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
         eps_hist = out[3] if len(out) > 3 else [0.0, 0.0, 0.0]
 
         if len(out) > 4:
-            n_leapfrog, n_warmup, target_accept, gamma, t0, kappa = out[4]
+            n_leapfrog, sampler_n_warmup, target_accept, gamma, t0, kappa = out[4]
         else:
-            n_leapfrog = n_warmup = target_accept = gamma = t0 = kappa = None 
+            n_leapfrog = sampler_n_warmup = target_accept = gamma = t0 = kappa = None
 
         
         # Apply burn-in: discard the first burn_in samples
@@ -232,8 +243,10 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
         flat_samples = post_burn_in_samples.reshape(-1, dim)
         
         # Compute sample mean and covariance
-        sample_mean = np.mean(flat_samples, axis=0)
-        sample_cov = np.cov(flat_samples, rowvar=False)
+        rest_samples = (post_burn_in_samples - B) @ Ai.T if affine else post_burn_in_samples
+        flat_rest_samples = rest_samples.reshape(-1, dim)
+        sample_mean = np.mean(flat_rest_samples, axis=0)
+        sample_cov = np.cov(flat_rest_samples, rowvar=False)
         # Calculate mean squared error for mean and covariance
         mean_mse = np.mean((sample_mean - true_mean)**2) / np.mean(true_mean**2)
         cov_mse = np.sum((sample_cov - cov_matrix)**2) / np.sum(cov_matrix**2)
@@ -243,27 +256,13 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
         acf = autocorrelation_fft(np.mean(samples[:, :, 0],axis=0))
         
         # Compute integrated autocorrelation time for first dimension
-        try:
-                taus = []
-                esses = []
-
-                for k in range(dim):
-                    coord_series = np.mean(post_burn_in_samples[:, :, k], axis=0)
-                    tau_k, _, ess_k = integrated_autocorr_time(coord_series)
-
-                    if np.isfinite(tau_k):
-                        taus.append(tau_k)
-                        esses.append(ess_k)
-
-                tau = np.median(taus)   # robust average
-                ess = np.median(esses)
-                tau_std = np.std(taus)
-        except:
-            traceback.print_exc()
-            tau, ess = np.nan, np.nan
-            tau_std = np.nan
+        transform_now = {"affine": affine, "A": A, "B": B}
+        ess, tau, ess_by_coordinate, tau_by_coordinate, ess_valid_fraction = worst_coordinate_ess(post_burn_in_samples, transform_now)
+        tau_std = float(np.nanstd(tau_by_coordinate))
 
         elapsed = time.time() - start_time
+        n_evaluations, evaluation_type = evaluation_count(name, len(acceptance_rates), n_samples, n_thin, n_leapfrog)
+        ess_per_eval = ess / n_evaluations if np.isfinite(ess) and np.isfinite(n_evaluations) else np.nan
         
         # Store results
         results[name] = {
@@ -280,13 +279,18 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             "tau": tau,
             "tau_std":tau_std,
             "ess": ess,
+            "ess_by_coordinate": ess_by_coordinate,
+            "ess_valid_fraction": ess_valid_fraction,
+            "n_evaluations": n_evaluations,
+            "evaluation_type": evaluation_type,
+            "ess_per_eval": ess_per_eval,
             "time": elapsed,
             "labels": None,
             "sigma":0.0,
             "epsilon":eps_final,
             "epsilon_history":eps_hist,
             "n_leapfrog":n_leapfrog,
-            "n_warmup":n_warmup,
+            "n_warmup":sampler_n_warmup,
             "target_accept":target_accept,
             "gamma":gamma,
             "t0":t0,
@@ -303,7 +307,11 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
     
     return results, true_mean, cov_matrix, transform
 
-results, true_mean, cov, transform = benchmark_samplers(dim = d, n_samples = 10000, burn_in = 1000, condition_number = 100, affine = af)
+results, true_mean, cov, transform = benchmark_samplers(
+    dim=d, n_samples=args.n_samples, burn_in=args.burn_in,
+    condition_number=cond, affine=af, seed=seed,
+    n_warmup=args.n_warmup, n_chains=args.n_chains, n_thin=args.n_thin,
+)
 
 samplers = list(results.keys())
 
@@ -323,9 +331,10 @@ for i, name in enumerate(samplers):
                      color = colors[i], linestyle = ':', label = f"{name}: epsilon = {np.round(results[name]['epsilon'], 3)}")
 
 
-outdir = f"GaussianResultsM/{d}d{afstring}"
-corner_dir = f"GaussianResultsM/{d}d{afstring}/corner"
-trends_dir = f"GaussianResultsM/{d}d{afstring}/trends"
+base_outdir = f"GaussianResultsM/{d}d{afstring}"
+outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
+corner_dir = os.path.join(outdir, "corner")
+trends_dir = os.path.join(outdir, "trends")
 os.makedirs(outdir, exist_ok=True)
 os.makedirs(corner_dir, exist_ok=True)
 os.makedirs(trends_dir, exist_ok=True)
@@ -336,7 +345,7 @@ plt.ylabel('Epsilon value')
 plt.ylim(0, 1.8)
 plt.xlim(left = 0.0)
 plt.legend()
-plt.savefig(f'GaussianResultsM/{d}d{afstring}/StepSize.pdf')
+plt.savefig(os.path.join(outdir, 'StepSize.pdf'))
 plt.close()
 #pickling output to compile locally
 def save_light_results(results, transform, outdir, dim, af):
@@ -368,6 +377,11 @@ def save_light_results(results, transform, outdir, dim, af):
             "tau": float(r["tau"]),
             "tau_std": float(r['tau_std']),
             "ess": float(r["ess"]),
+            "ess_by_coordinate": np.asarray(r["ess_by_coordinate"]).tolist(),
+            "ess_valid_fraction": np.asarray(r["ess_valid_fraction"]).tolist(),
+            "n_evaluations": float(r["n_evaluations"]),
+            "evaluation_type": r["evaluation_type"],
+            "ess_per_eval": float(r["ess_per_eval"]),
             "time": float(r["time"]),
             "sigma": float(r["sigma"]),
             "epsilon": float(r["epsilon"]),
@@ -381,6 +395,12 @@ def save_light_results(results, transform, outdir, dim, af):
 
     metadata = {
         "dim": dim,
+        "seed": seed,
+        "condition_number": cond,
+        "n_samples": args.n_samples,
+        "burn_in": args.burn_in,
+        "n_thin": args.n_thin,
+        "n_chains": args.n_chains,
         "af": af,
         "transform_affine": bool(transform["affine"]),
         "summary": summary,
@@ -397,6 +417,12 @@ save_light_results(
     outdir=outdir,
     dim=d,
     af=af,
+)
+update_seed_manifest(
+    base_outdir, seed, outdir,
+    {"dim": d, "condition_number": cond, "affine": af,
+     "n_samples": args.n_samples, "burn_in": args.burn_in,
+     "n_thin": args.n_thin, "n_chains": args.n_chains},
 )
 
 # Plot the results
