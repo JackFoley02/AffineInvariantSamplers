@@ -1,692 +1,473 @@
 """
-Standard HMC Sampler, refit using JAX for efficiency and to incorporate
-ChEES criterion to tune integration length.
+sampler_chees — standard ChEES HMC (no ensemble preconditioning), single file, JAX only.
+
+Standard HMC with identity mass matrix.
+Adaptation (warmup only, each independently toggleable):
+  Dual averaging       → step size             (adapt_step_size)
+  ChEES criterion      → integration length    (adapt_L)
+  Heuristic line search→ initial step size     (find_init_step_size)
+
+Setting all three flags to False reduces warmup to a plain burn-in at the
+user-supplied (step_size, L).
+
+Reference: https://proceedings.mlr.press/v130/hoffman21a.html
 """
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 from typing import NamedTuple
 
 
-#Helper Functions
-def make_batched_fns(log_prob_sca):
-    """
-    Converts a scalar log probability function into a batched, vectorized one for JAX compilation.
+# ──────────────────────────────────────────────────────────────────────────────
+# Leapfrog integrator  (standard, identity mass matrix)
+# ──────────────────────────────────────────────────────────────────────────────
 
-    Arguments:
-        log_prob_sca : a function that takes one point of shape (dim,) and returns one scalar probability.
-
-    Returns:
-        log_prob: 
-            function that can take in many points w/ shape (n_chains, dim) and returns a vector of scalar probabilities of shape (n_chains,).
-
-        grad_log_prob: 
-            function that can take in many points w/ shape (n_chains, dim) and returns the gradient of the scalar probability function for each dimension, of shape (n_chains, dim).
-
-        grad_U: 
-            -1 * grad_log_prob.
-
-    """
-    log_prob = jax.vmap(log_prob_sca)
-    grad_log_prob = jax.vmap(jax.grad(log_prob_sca))
-
-    def grad_U(x):
-        return -grad_log_prob(x)
-    
-    return log_prob, grad_log_prob, grad_U
-
-def leapfrog(q, p, grad_U, eps, L):
-    """
-    Helper Function to perform leapfrog integration that is JAX/JIT compatible
-
-    Arguments:
-        q:
-            current position vector within the target distribution
-        p: 
-            associated conjugate momenta of the positions in the target distribution.
-        grad_U:
-            gradient of potential energy function required for advancing the momentum during the leapfrog integration
-        eps:
-            the 'time step' length
-        L:
-            the number of leapfrog integrations to perform
-    """
-    #advance p by half step
-    p = p - 0.5 * eps * grad_U(q)
-
-    #begin integration chain
-    #defined for loop body to be compatible w/ JAX
-    def fl_body(i, state):
-        q, p = state #define current position and momenta
-
-        #advance the position forward one step:
+def _leapfrog(q, p, grad_U, eps, L):
+    """q:(N,D)  p:(N,D) — returns (q', p', velocity).  velocity=p for M=I."""
+    g = grad_U(q)
+    p = p - 0.5 * eps * g
+    def step(_, s):
+        q, p = s
         q = q + eps * p
-
-        #Momentum update, w/ JAX condition to skip final momentum update step:
-        p = jax.lax.cond(i < L - 1, lambda p: p - eps * grad_U(q), lambda p:p, p)
-        #JAX if statements are contained in these cond objects, and have the following syntax:
-        #jax.lax.cond(condition, true_func, false_func, operand)
-        #condition: condition to evaluate
-        #true_func: if condition is true, evaluate true_func using operand
-        #false_func: if condition is false, evaluate false_func using operand
-        #operand: the variable/value to perform operations with
-
-        #finally, return the state of the main loop body
-        return (q, p)
-    
-    #run loop to update q and p from their initial states:
-    q, p = jax.lax.fori_loop(0, L, fl_body, (q, p))
-
-    #perform final momentum integration step:
+        p = p - eps * grad_U(q)
+        return q, p
+    q, p = jax.lax.fori_loop(0, L - 1, step, (q, p))
+    q = q + eps * p
     p = p - 0.5 * eps * grad_U(q)
+    return q, p, p              # velocity = p for identity mass
 
-    return q, p
 
-def hmc_step(key, q, log_prob, grad_U, eps, L):
-    """
-    Helper function to run each individual HMC step. Vectorized for all chains.
+# ──────────────────────────────────────────────────────────────────────────────
+# HMC move — return (proposed, log_alpha, velocity, proposed_lp)
+# ──────────────────────────────────────────────────────────────────────────────
 
-    Arguments:
-        key:
-            PRNG key
-        q: 
-            position vector within the target distribution. Has shape (n_chains, dim)
-        log_prob:
-            batched log probability distribution
-        grad_U:
-            batched negative gradient of log_prob
-        eps:
-            epsilon, 'time step'/integration length parameter
-        L:
-            number of leapfrog steps
-        
-    """
-    n_chains, dim = q.shape #grab dimensions and number of chains here
+def _hmc_move(positions, eps, key, log_prob, grad_U, L, lp_cur):
+    """Standard HMC move for all chains.  p ~ N(0, I)."""
+    N, D = positions.shape
+    p0 = jax.random.normal(key, (N, D))
+    proposed, p1, vel = _leapfrog(positions, p0, grad_U, eps, L)
+    lp1 = log_prob(proposed)
+    dH  = (-lp1 + 0.5 * jnp.sum(p1**2, axis=1)) \
+        - (-lp_cur + 0.5 * jnp.sum(p0**2, axis=1))
+    dH  = jnp.where(jnp.isnan(dH), jnp.inf, dH)
+    return proposed, jnp.minimum(0., -dH), vel, lp1
 
-    #Split JAX randomization keys
-    key_p, key_accept = jax.random.split(key)
 
-    #Draw random momentum sample
-    p0 = jax.random.normal(key_p, shape = q.shape)
+# ──────────────────────────────────────────────────────────────────────────────
+# Metropolis accept / reject
+# ──────────────────────────────────────────────────────────────────────────────
 
-    #Compute energies of current step
-    U_current = -log_prob(q)
-    K_current = 0.5 * jnp.sum(p0**2, axis = 1)
+def _mh(current, proposed, log_alpha, key):
+    accept = jnp.log(jax.random.uniform(key, log_alpha.shape, minval=1e-10)) < log_alpha
+    return jnp.where(accept[:, None], proposed, current), accept
 
-    #generate leapfrog step proposal
-    q_prop, p_prop = leapfrog(q, p0, grad_U, eps=eps, L=L)
 
-    #return velocity for ChEES
-    vel = p_prop
-
-    #flip momentum for reversibility/detailed balance
-    p_prop = -p_prop
-
-    #Compute new energies at the proposal position
-    U_prop = -log_prob(q_prop)
-    K_prop = 0.5 * jnp.sum(p_prop**2, axis = 1)
-
-    #Generate Metropolis acceptance probability with some protection against discontinuities
-    finite = (
-        jnp.isfinite(U_current)
-        & jnp.isfinite(K_current)
-        & jnp.isfinite(U_prop)
-        & jnp.isfinite(K_prop)
-        & jnp.all(jnp.isfinite(q_prop), axis=1)
-        & jnp.all(jnp.isfinite(p_prop), axis=1)
+def _stretch_half(active, complement, log_prob, key, scale):
+    """Update one ensemble half using the other as the fixed complement."""
+    key_partner, key_z, key_accept = jax.random.split(key, 3)
+    partner_idx = jax.random.randint(
+        key_partner, (active.shape[0],), 0, complement.shape[0]
     )
+    partners = complement[partner_idx]
+    uniform = jax.random.uniform(key_z, (active.shape[0],))
+    z = ((scale - 1.0) * uniform + 1.0) ** 2 / scale
+    proposed = partners + z[:, None] * (active - partners)
+    log_alpha = ((active.shape[1] - 1) * jnp.log(z)
+                 + log_prob(proposed) - log_prob(active))
+    accept = jnp.log(jax.random.uniform(
+        key_accept, log_alpha.shape, minval=1e-10
+    )) < log_alpha
+    return jnp.where(accept[:, None], proposed, active), accept
 
-    raw_log_accept = U_current + K_current - U_prop - K_prop
-    log_accept_prob = jnp.where(finite, raw_log_accept, -jnp.inf)
-    log_accept_prob = jnp.minimum(0.0, log_accept_prob)
 
-    accept_prob = jnp.exp(log_accept_prob)
-    accept_prob = jnp.where(jnp.isfinite(accept_prob), accept_prob, 0.0)
+def _run_stretch_warmup(key, state, log_prob, num_steps=50, scale=2.0):
+    """Condition an initial ensemble with parallel stretch-move updates."""
+    if num_steps <= 0:
+        return key, state, jnp.asarray(0.0)
+    if state.shape[0] < 2:
+        raise ValueError("Stretch warmup requires at least two chains")
 
-    #Draw some uniform random numbers for each walker
-    log_uniform = jnp.log(jax.random.uniform(key_accept, shape = (n_chains,)))
+    split = state.shape[0] // 2
 
-    accept = log_uniform < log_accept_prob
+    @jax.jit
+    def step(state, keys):
+        key_first, key_second = keys
+        first, second = state[:split], state[split:]
+        first, accept_first = _stretch_half(
+            first, second, log_prob, key_first, scale
+        )
+        second, accept_second = _stretch_half(
+            second, first, log_prob, key_second, scale
+        )
+        state = jnp.concatenate([first, second], axis=0)
+        acceptance = jnp.concatenate([accept_first, accept_second])
+        return state, jnp.mean(acceptance.astype(float))
 
-    #select the new states, leave states unchanged if acceptance not met for the particular chain:
-    q_new = jnp.where(accept[:, None], q_prop, q)
+    key, warmup_key = jax.random.split(key)
+    keys = jax.random.split(warmup_key, num_steps * 2).reshape(
+        num_steps, 2, *key.shape
+    )
+    state, acceptance = jax.lax.scan(step, state, keys)
+    return key, state, jnp.mean(acceptance)
 
-    return q_new, accept, accept_prob, log_accept_prob, q_prop, vel
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dual averaging — step size
+# ──────────────────────────────────────────────────────────────────────────────
 
 class DAState(NamedTuple):
-    """
-    Class that contains the current dual averaging state and update functions.
-    """
+    iteration: int
+    log_eps: float
+    log_eps_bar: float
+    H_bar: float
 
-    iteration:int 
-    log_eps:float
-    log_eps_bar:float
-    H_bar:float
+def _da_init(log_eps0):
+    return DAState(0, log_eps0, log_eps0, 0.)
 
-def init_da_state(epsilon_init): #Initializes DA state
-        log_eps0 = jnp.log(epsilon_init)
-        return DAState(
-            iteration=0,
-            log_eps=log_eps0,
-            log_eps_bar=log_eps0,
-            H_bar = 0.0,
-        )
-    
-def update_da( #update the dual averaging state
-      state,
-      accept_prob, #Should be scalar mean acceptance probability across walkers?
-      log_eps0,
-      target_accept = 0.651,
-      gamma = 0.05,
-      t0 = 10,
-      kappa = 0.75,
-      emin = 1e-4,
-      emax = 0.1,
+def _da_update(state, log_alpha, log_eps0, target, t0=10., gamma=0.05, kappa=0.75):
+    it     = state.iteration + 1
+    accept = log_alpha.size / jnp.sum(1. / jnp.clip(jnp.exp(log_alpha), 1e-10, 1.))
+    eta    = 1. / (it + t0)
+    H_bar  = (1. - eta) * state.H_bar + eta * (target - accept)
+    log_e  = log_eps0 - jnp.sqrt(it) / gamma * H_bar
+    log_eb = it**(-kappa) * log_e + (1. - it**(-kappa)) * state.log_eps_bar
+    return DAState(it, log_e, log_eb, H_bar)
 
-    ):
-        it = state.iteration + 1
-        accept_prob = jnp.clip(accept_prob, 0.0, 1.0)
 
-        eta = 1 / (it + t0)
+# ──────────────────────────────────────────────────────────────────────────────
+# ChEES — integration length via ADAM ascent on trajectory quality
+# ──────────────────────────────────────────────────────────────────────────────
 
-        H_bar = (1.0 - eta) * state.H_bar + eta * (target_accept - accept_prob)
-        
-        mu = log_eps0+jnp.log(10)
-        
-        log_eps = mu - (jnp.sqrt(it) / gamma) * H_bar
-        log_eps = jnp.clip(log_eps, jnp.log(emin), jnp.log(emax))
-
-        eta_bar = it **(-kappa)
-
-        log_eps_bar = (1-eta_bar) * state.log_eps_bar + eta_bar * log_eps
-
-        return DAState(
-            iteration=it,
-            log_eps=log_eps,
-            log_eps_bar=log_eps_bar,
-            H_bar=H_bar
-        )
-    
-class CHEESState(NamedTuple):
-     log_T: float
-     log_T_bar: float
-     m: float
-     v: float
-     iteration: int
-     halton: float
+class ChEESState(NamedTuple):
+    log_T: float;  log_T_bar: float
+    m: float;      v: float
+    iteration: int; halton: float
 
 @jax.jit
-def halton(n, base = 2): #deterministic jitter function to shift the integration length around. n is the iteration index within the warmup sequence
-     i = jnp.asarray(n, jnp.int32)
-     b = jnp.asarray(base, jnp.int32)
+def _halton(n, base=2):
+    i, b = jnp.asarray(n, jnp.int32), jnp.asarray(base, jnp.int32)
+    def body(s):
+        i, f, r = s; f = f / jnp.float32(b)
+        return i // b, f, r + f * jnp.mod(i, b)
+    _, _, r = jax.lax.while_loop(lambda s: s[0] > 0, body, (i, 1., 0.))
+    return r
 
-     def cond(state): #condition for loop
-          i, f, r = state
-          return i > 0
-     
-     def loop_body(state): #main loop body, just a halton sequence
-          i, f, r = state
-          f = f / b
-          r = r + f * jnp.mod(i, b)
-          i = i // b
-          return i, f, r
-     
-     _, _, r = jax.lax.while_loop(cond, loop_body, (i, 1.0, 0.0))
-     return r
+def _chees_init(eps, L):
+    T = eps * L
+    return ChEESState(jnp.log(T), jnp.log(T), 0., 0., 1, _halton(1))
 
-def init_chees(epsilon_init, L_init):
-    T_init = epsilon_init * L_init
-    return CHEESState(log_T=jnp.log(T_init), log_T_bar=jnp.log(T_init), m = 0.0, v = 0.0, iteration = 1, halton=halton(1))
+def _chees_update(state, log_alpha, pos_cur, pos_pro, vel,
+                  lr=0.025, beta1=0., beta2=0.95, reg=1e-7,
+                  T_min=0.25, T_max=10., T_interp=0.9):
+    """
+    ChEES gradient signal (euclidean metric):
+      g = t_n * diff_sq * inner
+      diff_sq = ||c_pro||^2 - ||c_cur||^2     (change in centered second moment)
+      inner   = c_pro^T vel                    (alignment with velocity)
+    """
+    alpha = jnp.clip(jnp.exp(log_alpha), 0., 1.)
+    c_cur = pos_cur - jnp.mean(pos_cur, axis=0)
+    c_pro = pos_pro - jnp.mean(pos_pro, axis=0)
 
-def chees_L(state, epsilon, jitter = 0.6, use_bar = False, max_L = 5000, apply_jit=True):
-     log_T = state.log_T_bar if use_bar else state.log_T
-     T = jnp.exp(log_T) #grab current T
-     if apply_jit:
-        T_jit = (1-jitter) * T + jitter * state.halton * T #jitter the current T
-     else:
-        T_jit = T
+    diff_sq = jnp.sum(c_pro**2, 1) - jnp.sum(c_cur**2, 1)
+    inner   = jnp.sum(c_pro * vel, 1)
 
-     L = jnp.ceil(T_jit / epsilon)
-     L = jnp.clip(L, 1, max_L)
-
-     return L.astype(jnp.int32)
-
-def update_chees(
-    state,
-    accept_prob,
-    q_cur,
-    q_prop,
-    velocity,
-    lr = 0.01,
-    beta1 = 0.0,
-    beta2 = 0.95,
-    reg = 1e-7,
-    T_min = 0.01,
-    T_max = 0.2,
-    T_interp = 0.9
-):
-     #Centering position vectors for ChEES criterion
-    c_cur = q_cur - jnp.mean(q_cur, axis = 0)
-    c_prop = q_prop - jnp.mean(q_prop, axis = 0)
-
-     #Calculating difference of squares
-    diff_sq = jnp.sum(c_prop**2, axis = 1) - jnp.sum(c_cur**2, axis = 1)
-    inner = jnp.sum(c_prop * velocity, axis = 1)
-
-     #calculate the g statistic for ChEES
-    g_all = state.halton * jnp.exp(state.log_T) * diff_sq * inner
-
-     #Prevent discontinuous behavior:
-    valid = (accept_prob > 1e-4) & jnp.isfinite(g_all)
-    g_all = jnp.where(valid, g_all, 0.0) #replace discontinuous values and essentially zero probabilites to zero.
-
-    #calculate acceptance-weighted g statistic (add small regularization to prevent division by zero)
-    g = jnp.sum(accept_prob * g_all) / (jnp.sum(accept_prob) + reg)
-    g = jnp.where(jnp.isfinite(g), g, 0.0)
+    g_m = state.halton * jnp.exp(state.log_T) * diff_sq * inner
+    g_m = jnp.where((alpha > 1e-4) & jnp.isfinite(g_m), g_m, 0.)
+    g   = jnp.sum(alpha * g_m) / (jnp.sum(alpha) + reg)
 
     it = state.iteration + 1
+    m  = beta1 * state.m + (1 - beta1) * g
+    v  = beta2 * state.v + (1 - beta2) * g**2
+    delta = lr * (m / (1 - beta1**it)) / jnp.sqrt(v / (1 - beta2**it) + reg)
+    delta = jnp.clip(delta, -0.35, 0.35)       # per-step clip (TFP/BlackJAX)
+    log_T = jnp.clip(state.log_T + delta, jnp.log(T_min), jnp.log(T_max))
+    log_Tb = jnp.logaddexp(jnp.log(T_interp) + state.log_T_bar,
+                            jnp.log(1 - T_interp) + log_T)
+    log_Tb = jnp.clip(log_Tb, jnp.log(T_min), jnp.log(T_max))
+    return ChEESState(log_T, log_Tb, m, v, it, _halton(it))
 
-    m = beta1 * state.m + (1.0 - beta1) * g
-    v = beta2 * state.v + (1.0 - beta2) * g * g
+def _chees_L(state, eps, jitter=0.6, bar=False, max_L=100):
+    T = jnp.exp(state.log_T_bar if bar else state.log_T)
+    T = (1 - jitter) * T + jitter * state.halton * T
+    return jnp.clip(jnp.ceil(T / eps), 1, max_L).astype(int)
 
-    m = jnp.where(jnp.isfinite(m), m, 0.0)
-    v = jnp.where(jnp.isfinite(v), v, 0.0)
 
-    m_hat = m if beta1 == 0.0 else m / (1.0 - beta1**it)
-    v_hat = v / (1.0 - beta2**it)
+# ──────────────────────────────────────────────────────────────────────────────
+# Initial step-size search (~80% acceptance with L=1)
+# ──────────────────────────────────────────────────────────────────────────────
 
-    m_hat = jnp.where(jnp.isfinite(m_hat), m_hat, 0.0)
-    v_hat = jnp.where(jnp.isfinite(v_hat), v_hat, 0.0)
+def _find_init_eps(key, positions, log_prob, grad_U, eps0):
+    lp = log_prob(positions)
+    fi = jnp.finfo(jnp.result_type(eps0))
 
-    delta = lr * m_hat / jnp.sqrt(v_hat + reg)
-    delta = jnp.where(jnp.isfinite(delta), delta, 0.0)
-    delta = jnp.clip(delta, -0.05, 0.05)
+    def body(s):
+        eps, _, d, k = s
+        k, k1 = jax.random.split(k)
+        eps = (2.**d) * eps
+        _, la, _, _ = _hmc_move(positions, eps, k1, log_prob, grad_U, 1, lp)
+        avg = jnp.log(la.shape[0]) - jax.scipy.special.logsumexp(-la)
+        return eps, d, jnp.where(jnp.log(.8) < avg, 1, -1), k
 
-    #Finally, at long last, update log T
-    old_log_T = jnp.where(jnp.isfinite(state.log_T), state.log_T, jnp.log(T_min))
-    old_log_T_bar = jnp.where(jnp.isfinite(state.log_T_bar), state.log_T_bar, jnp.log(T_min))
+    def cond(s):
+        eps, ld, d, _ = s
+        return (((eps > fi.tiny) | (d >= 0)) & ((eps < fi.max) | (d <= 0))
+                & ((ld == 0) | (d == ld)))
 
-    log_T = old_log_T + delta
-    log_T = jnp.clip(log_T, jnp.log(T_min), jnp.log(T_max))
+    eps, *_ = jax.lax.while_loop(cond, body, (eps0, 0, 0, key))
+    return eps / 2.
 
-    log_T_bar = jnp.logaddexp(
-        jnp.log(T_interp) + old_log_T_bar,
-        jnp.log(1.0 - T_interp) + log_T,
-    )
-    log_T_bar = jnp.where(jnp.isfinite(log_T_bar), log_T_bar, log_T)
-    log_T_bar = jnp.clip(log_T_bar, jnp.log(T_min), jnp.log(T_max))    
 
-    return CHEESState(
-          log_T = log_T,
-          log_T_bar = log_T_bar,
-          m = m,
-          v = v,
-          iteration = it,
-          halton = halton(it)
-     )
+# ──────────────────────────────────────────────────────────────────────────────
+# sampler_chees
+# ──────────────────────────────────────────────────────────────────────────────
 
-def stretch_warmup_step(key, q0, log_prob, a = 2):
-    """A single parallelized stretch-move step for a pre-warmup conditioning of the initial walker ensemble.
-    
-    Arguments:
-    ----------
-    key : 
-        JAX randomness key
-    q0:
-        initial walker ensemble, has shape (n_chains, dim)
-    log_prob:
-        JAX-batched log-probability function of shape (n_chains,)
-    
+def sampler_chees(
+    log_prob_fn,
+    initial_state,
+    num_samples,
+    warmup           = 1000,
+    step_size        = 0.1,
+    L                = 5,
+    max_L            = 20,
+    thin_by          = 1,
+    target_accept    = 0.651,
+    grad_log_prob_fn    = None,
+    find_init_step_size = True,
+    adapt_step_size     = True,
+    adapt_L             = True,
+    stretch_warmup      = 50,
+    stretch_scale       = 2.0,
+    seed                = 0,
+    verbose             = True,
+):
     """
+    Standard ChEES HMC with automatic step-size and integration-length tuning.
+    No ensemble preconditioning — identity mass matrix, p ~ N(0, I).
 
-    n_chains, dim = q0.shape #grab chains and dim from ensemble shape
-    half = n_chains // 2 #split up ensemble into complementary ensembles
+    Args:
+        log_prob_fn      : (batch, D) -> (batch,).  Vectorised log density.
+        initial_state    : (n_chains, D).
+        num_samples      : Post-warmup samples to return.
+        warmup           : Warmup iterations.
+        step_size        : Initial step size (adapted during warmup).
+        L                : Initial leapfrog steps (adapted during warmup).
+        max_L            : Maximum leapfrog steps (default 100).
+        thin_by          : Keep every thin_by-th sample.
+        target_accept    : Target acceptance rate for dual averaging.
+        grad_log_prob_fn : Vectorised gradient (batch,D)->(batch,D).
+                           If None, uses jax.vmap(jax.grad(log_prob_fn)).
+        find_init_step_size : If True (default), run a short heuristic search at
+                              the initial positions to scale `step_size` to
+                              ~80% acceptance before warmup.
+                              If False, use `step_size` as-is.
+        adapt_step_size  : If True, tune step size by dual averaging during
+                           warmup.  If False, use `step_size` as given.
+        adapt_L          : If True, tune integration length by ChEES during
+                           warmup.  If False, use `L` as given.
+        seed             : Integer random seed.
+        verbose          : Print progress.
 
-    if n_chains % 2 != 0:
-        raise ValueError('The number of chains must be even for warm-up parallelization.')
-    
-    def update_half(key, q, active_idx, comp_idx):
-        """Helper function to update one of the ensembles with the other ensemble.
-        
-        Arguments:
-        ----------
-        key :
-            JAX randomness key
-        q : 
-            Ensemble vector
-        active_idx : 
-            Index array (within q) of the current walker to update
-        comp_idx : 
-            Index array (within q) of the complimentary walker for the update.
-
-        Returns:
-        ----------
-        q :
-            Updated ensemble vector.
-        accept :
-            Acceptance probability.
-        """
-
-        key_select, key_z, key_accept = jax.random.split(key, 3) #prep keys
-
-        active = q[active_idx] #grab walker to update
-        comp = q[comp_idx]
-
-        # Select one complementary walker for each active walker.
-        selected = jax.random.randint(
-            key_select,
-            shape=(half,),
-            minval=0,
-            maxval=half,
-        )
-        comp_selected = comp[selected]
-
-        # Goodman-Weare stretch factor:
-        # z in [1/a, a], density proportional to 1/sqrt(z)
-        u = jax.random.uniform(key_z, shape=(half,))
-        z = ((a - 1.0) * u + 1.0) ** 2 / a
-
-        proposals = comp_selected + z[:, None] * (active - comp_selected)
-
-        current_lp = log_prob(active)
-        proposal_lp = log_prob(proposals)
-
-        finite = (
-            jnp.isfinite(current_lp)
-            & jnp.isfinite(proposal_lp)
-            & jnp.all(jnp.isfinite(proposals), axis=1)
-        )
-
-        log_accept = (dim - 1) * jnp.log(z) + proposal_lp - current_lp
-        log_accept = jnp.where(finite, log_accept, -jnp.inf)
-
-        log_u = jnp.log(jax.random.uniform(key_accept, shape=(half,)))
-        accept = log_u < log_accept
-
-        updated_active = jnp.where(accept[:, None], proposals, active)
-        q = q.at[active_idx].set(updated_active)
-
-        return q, accept
-
-    idx1 = jnp.arange(0, half)
-    idx2 = jnp.arange(half, n_chains)
-
-    key1, key2 = jax.random.split(key)
-
-    q, accept1 = update_half(key1, q0, idx1, idx2)
-    q, accept2 = update_half(key2, q, idx2, idx1)
-
-    accept = jnp.concatenate([accept1, accept2])
-
-    return q, accept
-
-def stretch_warmup(key, q0, log_prob, n_steps = 100, a = 2.0):
-    """Perform the full 50 step stretch-move warmup algorithm
-    
-    Arguments:
-    ----------
-    key : 
-        JAX randomness key
-    q0:
-        Initial Ensemble
-    log_prob : 
-        JAX-batched log probablity function
-    n_steps : 
-        Number of stretch-move steps or orchestrate during 
-    
     Returns:
-    ----------
-    key : 
-        JAX randomness key
-    q_final : 
-        Newly conditioned initial ensemble for extensive HMC warmup
+        samples : (num_samples, n_chains, D)
+        info    : dict(acceptance_rate, final_step_size, final_L)
     """
-
-    def step(carry, _):
-        "Run single step while managing key transfer"
-        key, q = carry #grabbing carry-over from other steps
-        key, subkey = jax.random.split(key)
-
-        q_new, accept = stretch_warmup_step(key=subkey, q0 = q, log_prob=log_prob, a = a)
-
-        return (key, q_new), jnp.mean(accept)
+    state    = jnp.asarray(initial_state)
     
-    (key, q_final), accept_history = jax.lax.scan(step, (key, q0), xs=None, length=n_steps)
+    assert 1 <= L <= max_L, f"Need 1 <= L <= max_L (got L={L}, max_L={max_L})"
 
-    return(key, q_final, accept_history)
-        
-def hmc_warmup(
-        key,
-        q0,
-        log_prob,
-        grad_U, 
-        eps0,
-        L0,
-        n_warmup,
-        max_L = 5000,
-        target_accept = 0.651,
-        emin = 1e-3,
-        emax = 0.1,
-        chees_lr = 0.01,
-        T_min = 0.01,
-        T_max = 0.2
-):
-    """
-    Function to perform the warmup step size and integration length tuning
-    """
+    if grad_log_prob_fn is None:
+        grad_U = jax.vmap(jax.grad(lambda x: log_prob_fn(x[None])[0]))
+    else:
+        grad_U = grad_log_prob_fn
+    _grad_U = lambda x: -grad_U(x)
 
-    #initialize dual averaging state:
-    da = init_da_state(eps0)
-    log_eps0 = jnp.log(eps0)
+    key = jax.random.key(seed)
 
-    #Initialize CHEES State:
-    chees = init_chees(eps0, L0)
-
-    #Function to produce each warmup step:
-    def step(carry:tuple, _):
-        key, q, da, chees = carry #carry is a tuple that stores all of the information carried between warm-up steps (i.e. information fed into dual averaging scheme at the start of each step)
-        eps = jnp.exp(da.log_eps)
-        current_L = chees_L(chees, eps, max_L = max_L)
-
-        key, subkey = jax.random.split(key) #splitting key for randomness reproducibility
-
-        #perform the hmc integration step
-        q_new, accept, accept_prob, log_accept_prob, q_prop, vel = hmc_step(subkey, q, log_prob, grad_U, eps, current_L)
-         
-        #determine mean acceptance probability from this integration step:
-        mean_accept = jnp.mean(accept_prob)
-        mean_accept = jnp.where(jnp.isfinite(mean_accept), mean_accept, 0.0)
-
-        #Update dual averaging state using the new positions and acceptance probability
-        da_new = update_da(da, mean_accept, log_eps0, target_accept=target_accept, emin=emin, emax=emax)
-
-        #update ChEES state
-        q_prop_safe = jnp.where(jnp.isfinite(q_prop), q_prop, q)
-        vel_safe = jnp.where(jnp.isfinite(vel), vel, 0.0)
-
-        chees_new = update_chees(
-            chees,
-            accept_prob=accept_prob,
-            q_cur=q,
-            q_prop=q_prop_safe,
-            velocity=vel_safe,
-            lr=chees_lr,
-            T_min=T_min,
-            T_max=T_max,
-        )
-
-        #populate the new carry tuple and pass on the epsilon and acceptance rate (for history)
-        new_carry = (key, q_new, da_new, chees_new)
-        new_epshist = (eps, mean_accept, current_L)
-
-        return new_carry, new_epshist
-    
-    #generate complete warmup integration smoothly with JAX:
-    (key, q_final, da_final, chees_final), (eps_hist, accept_hist, L_hist) = jax.lax.scan(
-         step, #perform this function
-         (key, q0, da, chees), #starting with these initial conditions
-         xs = None, #no need to reference an existing array
-         length = n_warmup #do this stepping for this many steps
+    # Condition the initial ensemble before either adaptation scheme sees it.
+    key, state, stretch_accept = _run_stretch_warmup(
+        key, state, log_prob_fn, stretch_warmup, stretch_scale
     )
+    if verbose and stretch_warmup:
+        print(f"Stretch-move warmup done.  accept={float(stretch_accept):.3f}")
 
-    final_eps = jnp.exp(da_final.log_eps_bar) #store final epsilon value
-    final_eps = jnp.clip(final_eps, emin, emax)
-    final_T = jnp.exp(chees_final.log_T_bar)
-    raw_final_L = jnp.ceil(final_T / final_eps)
+    # --- initial step size ---
+    if find_init_step_size:
+        _user_h = float(step_size)
+        key, k = jax.random.split(key)
+        step_size = _find_init_eps(k, state, log_prob_fn, _grad_U, step_size)
+        if verbose:
+            print(f"[chees] find_init_step_size: step_size {_user_h:.4g} → "
+                  f"{float(step_size):.4g}\n"
+                  f"   (if the chain later stalls, set find_init_step_size=False "
+                  f"and pass your own step_size — the heuristic can overshoot "
+                  f"when the initial positions are under-dispersed vs the target.)")
+    step_size = jnp.asarray(step_size)
+    if verbose:
+        print(f"metric=euclidean  init_eps={float(step_size):.4f}"
+              f"  find_init_step_size={find_init_step_size}"
+              f"  adapt_step_size={adapt_step_size}  adapt_L={adapt_L}")
 
-    final_L = jnp.asarray(raw_final_L, dtype=jnp.int32)
-    final_L = jnp.maximum(final_L, jnp.array(1, dtype=jnp.int32))
-    final_L = jnp.minimum(final_L, jnp.array(max_L, dtype=jnp.int32))
+    log_eps0 = jnp.log(step_size)
+    da  = _da_init(log_eps0)
+    ch  = _chees_init(step_size, L)
+    lp  = log_prob_fn(state)
 
-    print("  final epsilon:", float(jax.device_get(final_eps)))
-    print("  final log_T_bar:", float(jax.device_get(chees_final.log_T_bar)))
-    print("  final T:", float(jax.device_get(jnp.exp(chees_final.log_T_bar))))
-    print("  raw final L:", float(jax.device_get(raw_final_L)))
-    print("  final L:", int(jax.device_get(final_L)))
-    print("  warmup L min/max:", int(jax.device_get(jnp.min(L_hist))), int(jax.device_get(jnp.max(L_hist))))
-    if bool(jax.device_get(jnp.any(L_hist >= max_L))):
-        print("  Warning: ChEES hit max_L during warmup; raise emin, lower T_max, or add mass-matrix preconditioning.")
-    
-    return key, q_final, final_eps, final_L, eps_hist, accept_hist
+    # Closure-captured Python bools resolve at trace time, so unused
+    # adaptation branches are removed from the compiled graph entirely.
+    fixed_L = jnp.int32(L)
 
-def hmc_sample(
-    key,
-    q0,
-    log_prob,
-    grad_U,
-    eps,
-    L,
-    n_samples,
-    n_thin,
-):
-    def one_step(carry, _):
-        key, q = carry
-        key, subkey = jax.random.split(key)
+    # --- warmup ---
+    @jax.jit
+    def _warmup_step(positions, lp, da, ch, keys):
+        k1, ka = keys
+        eps   = jnp.exp(da.log_eps) if adapt_step_size else step_size
+        cur_L = _chees_L(ch, eps, max_L=max_L) if adapt_L else fixed_L
 
-        q_new, accept, *_ = hmc_step(
-            subkey, q, log_prob, grad_U, eps, L
-        )
+        proposed, la, vel, lp_new = _hmc_move(
+            positions, eps, k1, log_prob_fn, _grad_U, cur_L, lp)
+        if adapt_step_size:
+            da = _da_update(da, la, log_eps0, target_accept)
+        if adapt_L:
+            ch = _chees_update(ch, la, positions, proposed, vel)
+        positions, accept = _mh(positions, proposed, la, ka)
+        lp = jnp.where(accept, lp_new, lp)
 
-        return (key, q_new), accept
+        acc = jnp.mean(accept.astype(float))
+        return positions, lp, da, ch, acc
 
-    def one_saved_sample(carry, _):
-        # Run n_thin HMC transitions, but only keep the final q
-        (key, q), accepts_block = jax.lax.scan(
-            one_step,
-            carry,
-            xs=None,
-            length=n_thin,
-        )
+    key, k = jax.random.split(key)
+    flat  = jax.random.split(k, warmup * 2)
+    wkeys = flat.reshape(warmup, 2, *flat.shape[1:])
+    total_acc = 0.
+    for i in range(warmup):
+        state, lp, da, ch, acc = _warmup_step(state, lp, da, ch, wkeys[i])
+        total_acc += acc
 
-        # Store only one sample per block
-        accept_block = jnp.mean(accepts_block, axis=0)
+    final_eps   = jnp.exp(da.log_eps_bar) if adapt_step_size else step_size
+    if adapt_L:
+        final_log_T = ch.log_T_bar
+        nominal_L   = _chees_L(ch, final_eps, bar=True, max_L=max_L)
+    else:
+        final_log_T = jnp.log(final_eps * L)
+        nominal_L   = fixed_L
+    if verbose:
+        print(f"Warmup done.  eps={float(final_eps):.4f}  L={int(nominal_L)}"
+              f"  accept={float(total_acc)/max(warmup,1):.3f}")
 
-        return (key, q), (q, accept_block)
+    # --- main sampling (jitter L each step via Halton, standard ChEES) ---
+    jitter = 0.6
+    halton_offset = ch.iteration
 
-    (key, q_final), (samples, accepts) = jax.lax.scan(
-        one_saved_sample,
-        (key, q0),
-        xs=None,
-        length=n_samples,
-    )
+    @jax.jit
+    def _step(carry, keys):
+        positions, lp, step_i = carry
+        k1, ka = keys
+        if adapt_L:
+            h = _halton(halton_offset + step_i)
+            T = jnp.exp(final_log_T)
+            T_jit = (1 - jitter) * T + jitter * h * T
+            Lc = jnp.clip(jnp.ceil(T_jit / final_eps), 1, max_L).astype(int)
+        else:
+            Lc = fixed_L
+        proposed, la, _, lp_new = _hmc_move(
+            positions, final_eps, k1, log_prob_fn, _grad_U, Lc, lp)
+        positions, accept = _mh(positions, proposed, la, ka)
+        lp = jnp.where(accept, lp_new, lp)
+        return (positions, lp, step_i + 1), (positions, accept.astype(float))
 
-    return key, samples, accepts
+    key, k  = jax.random.split(key)
+    flat    = jax.random.split(k, num_samples * thin_by * 2)
+    skeys   = flat.reshape(num_samples * thin_by, 2, *flat.shape[1:])
+    (state, lp, _), (all_states, all_acc) = jax.lax.scan(
+        _step, (state, lp, jnp.int32(0)), skeys)
+
+    samples = all_states[::thin_by]
+    info = dict(acceptance_rate=float(jnp.mean(all_acc)),
+                final_step_size=float(final_eps),
+                nominal_L=int(nominal_L))
+    if verbose:
+        print(f"Done.  accept={info['acceptance_rate']:.3f}")
+    return samples, info
+
 
 def hmc_chees(
-        log_prob,
-        initial,
-        n_samples,
-        epsilon = 0.1,
-        L = 10,
-        n_chains = 2,
-        n_thin = 1,
-        n_warmup = 1000,
-        target_accept = 0.651,
-        max_L = 5000,
-        seed = 0,
-        emin = 1e-3,
-        emax = 0.1,
-        chees_lr = 0.01,
-        T_min = 0.01,
-        T_max = 0.2
+    log_prob,
+    initial,
+    n_samples,
+    epsilon=0.1,
+    L=5,
+    n_chains=2,
+    n_thin=1,
+    n_warmup=1000,
+    target_accept=0.651,
+    max_L=20,
+    seed=0,
+    find_init_step_size=True,
+    adapt_step_size=True,
+    adapt_L=True,
+    stretch_warmup=50,
+    stretch_scale=2.0,
+    verbose=True,
+    **_legacy_options,
 ):
-    
+    """Benchmark-compatible adapter around :func:`sampler_chees`.
+
+    ``log_prob`` retains the benchmark's scalar-input convention, and the
+    returned samples retain its ``(chains, samples, dim)`` convention.
     """
-    Vectorized HMC w/ dual-averaging + trajectory length tuning warmup. Written in JAX
-    """
-    #generating initial conditions
     initial = jnp.asarray(initial, dtype=float)
-    dim = int(initial.shape[-1])
-
-    #batching probability density functions for JAX
-    log_prob, grad_log_prob, grad_U = make_batched_fns(log_prob_sca=log_prob)
-
-    #generate and split JAX key
-    key = jax.random.key(seed)
-    key, init_key = jax.random.split(key)
-
-    if initial.ndim == 2:
-        q0 = initial
-        n_chains = int(initial.shape[0])
+    if initial.ndim == 1:
+        key = jax.random.key(seed)
+        initial = jnp.tile(initial[None, :], (n_chains, 1))
+        initial = initial + 0.1 * jax.random.normal(key, initial.shape)
     else:
-        q0 = jnp.tile(initial[None, :], (n_chains, 1))
-        q0 = q0 + 0.1 * jax.random.normal(init_key, shape=(n_chains, dim))
+        n_chains = int(initial.shape[0])
 
-    #run 50-step stretch move warmup before ChEES
-    key, q0, stretch_accept_hist = stretch_warmup(
-        key=key,
-        q0=q0,
-        log_prob=log_prob,
-        n_steps=50,
-        a=2.0,
+    batched_log_prob = jax.vmap(log_prob)
+    samples, info = sampler_chees(
+        batched_log_prob,
+        initial,
+        num_samples=n_samples,
+        warmup=n_warmup,
+        step_size=epsilon,
+        L=L,
+        max_L=max_L,
+        thin_by=n_thin,
+        target_accept=target_accept,
+        find_init_step_size=find_init_step_size,
+        adapt_step_size=adapt_step_size,
+        adapt_L=adapt_L,
+        stretch_warmup=stretch_warmup,
+        stretch_scale=stretch_scale,
+        seed=seed,
+        verbose=verbose,
     )
-
-    print(f"Stretch-Move warmup complete, with acceptance {float(jax.device_get(jnp.round(jnp.mean(stretch_accept_hist), 3)))}")
-    
-    #run warmup loop
-    key, q_warm, final_eps, final_L, eps_hist, accept_hist = hmc_warmup(
-         key=key,
-         q0=q0,
-         log_prob=log_prob,
-         grad_U=grad_U,
-         eps0=epsilon,
-         L0=L,
-         n_warmup=n_warmup,
-         max_L=max_L,
-         target_accept=target_accept,
-         emin=emin,
-         emax=emax,
-         chees_lr=chees_lr,
-         T_min=T_min,
-         T_max=T_max,
-    )
-
-    #use warmup loop parameters to run main sampling loop
-    key, samples_jax, accepts = hmc_sample(
-         key,
-         q0=q_warm,
-         log_prob = log_prob,
-         grad_U = grad_U,
-         eps = final_eps,
-         L = final_L,
-         n_samples=n_samples,
-         n_thin=n_thin
-    )
-
-    #transpose JAX scan (n_samples, n_chains, dim) to standard ouput shape (n_chains, n_samples, dim)
-    #also converting back to numpy for congruency w/ plotting and report scripts
-    samples = np.asarray(samples_jax).transpose(1, 0, 2) #swap places of 0th and 1st axis.
-
-    #convert outputs to numpy-compatible values
-    accepts = np.asarray(jnp.mean(accepts, axis=0))
-    final_eps = float(final_eps)
-    eps_hist = np.asarray(eps_hist)
-
-    parmslist = [int(final_L), n_warmup, target_accept, 0.05, 10, 0.75]
+    samples = np.asarray(samples).transpose(1, 0, 2)
+    acceptance = np.full(n_chains, info["acceptance_rate"])
+    eps_hist = np.asarray([info["final_step_size"]])
+    parmslist = [info["nominal_L"], n_warmup, target_accept, 0.05, 10, 0.75]
+    return samples, acceptance, info["final_step_size"], eps_hist, parmslist
 
 
-    return samples, accepts, final_eps, eps_hist, parmslist
+# ───────────────────────────────────────────────────────────────────────────────
+# Demo
+# ────────────────────────────────────────────────────────────────────────────────
 
+if __name__ == "__main__":
+    dim  = 2
+    cov  = jnp.array([[1., .95], [.95, 1.]])
+    prec = jnp.linalg.inv(cov)
+    def log_prob(x):
+        return -0.5 * jnp.sum(x @ prec * x, axis=-1)
+    chains = 20
+    init = jax.random.normal(jax.random.key(42), (chains, dim))
 
-#adding this so I can commit it again
+    print("=" * 60)
+    print("ChEES HMC")
+    print("=" * 60)
+    samples, info = sampler_chees(log_prob, init, num_samples=2000, warmup=500, seed=123)
+    print(f"mean : {jnp.mean(samples, axis=(0,1))}")
+    print(f"cov  :\n{jnp.cov(samples.reshape(-1, dim), rowvar=False)}")
+    print(f"info : {info}")

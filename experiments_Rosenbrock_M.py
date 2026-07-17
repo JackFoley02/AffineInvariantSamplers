@@ -22,6 +22,15 @@ from experiment_diagnostics import worst_coordinate_ess, evaluation_count, updat
 
 N_CHAINS = 100
 
+# The standard entry point remains the oracle/stationary benchmark.  The
+# separate experiments_Rosenbrock_M_agnostic.py launcher sets this environment
+# variable so its results cannot be mixed with oracle-initialized runs.
+INITIALIZATION_MODE = os.environ.get("ROSENBROCK_INITIALIZATION", "oracle").lower()
+if INITIALIZATION_MODE not in {"oracle", "agnostic"}:
+    raise ValueError(
+        "ROSENBROCK_INITIALIZATION must be either 'oracle' or 'agnostic'"
+    )
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Benchmark tests of different MCMC sampling algorithms, applied to a multidimensional Rosenbrock distribution. # of dimensions MUST be even.'
@@ -229,6 +238,16 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
     def sample_initial_ensemble(n_chains, seed):
         rng = np.random.default_rng(seed)
+
+        if INITIALIZATION_MODE == "agnostic":
+            # Deliberately do not encode the Rosenbrock relation y ~= x**2 or
+            # draw from either exact conditional.  The ensemble starts as an
+            # isotropic, overdispersed cloud in the intrinsic/rest frame and
+            # must discover the curved target geometry during warmup/burn-in.
+            return 2.0 * rng.standard_normal((n_chains, dim))
+
+        # Oracle/stationary initialization: this is an exact target draw for
+        # each independent Rosenbrock pair.
         u = np.empty((n_chains, dim), dtype=float)
         x_odd = a + sigma * rng.standard_normal((n_chains, dim // 2))
         x_even = x_odd**2 + (sigma / np.sqrt(b)) * rng.standard_normal((n_chains, dim // 2))
@@ -508,7 +527,12 @@ else:
 
 
 #make directories
-base_outdir = f"RosenbrockResultsM/{d}d{afstring}"
+results_root = (
+    "RosenbrockResultsM_agnostic"
+    if INITIALIZATION_MODE == "agnostic"
+    else "RosenbrockResultsM"
+)
+base_outdir = f"{results_root}/{d}d{afstring}"
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = os.path.join(outdir, "corner")
 trends_dir = os.path.join(outdir, "trends")
@@ -574,6 +598,12 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
         "n_thin": args.n_thin,
         "n_chains": args.n_chains,
         "af": af,
+        "initialization_mode": INITIALIZATION_MODE,
+        "initialization_description": (
+            "independent N(0, 2^2) coordinates in the intrinsic Rosenbrock frame"
+            if INITIALIZATION_MODE == "agnostic"
+            else "exact draws from the paired Rosenbrock target"
+        ),
         "transform_affine": bool(transform["affine"]),
         "overlay_rosenbrock": overlay,
         "summary": summary,
@@ -595,6 +625,7 @@ save_light_results(
 update_seed_manifest(
     base_outdir, seed, outdir,
     {"dim": d, "condition_number": cond, "affine": af,
+     "initialization_mode": INITIALIZATION_MODE,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
      "n_thin": args.n_thin, "n_chains": args.n_chains},
 )
@@ -610,7 +641,11 @@ if not args.no_plots:
 if not args.no_report:
     from generate_report import SamplerReport
 
-    report = SamplerReport(results=results, label = 'RosenbrockM', transform=transform, overlay=overlay_rosenbrock)
-    report.compile_pdf(texname = os.path.join(outdir, f'RosenbrockM_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
+    report_label = f"RosenbrockM_{INITIALIZATION_MODE}"
+    report = SamplerReport(results=results, label=report_label, transform=transform, overlay=overlay_rosenbrock)
+    report.compile_pdf(texname = os.path.join(outdir, f'{report_label}_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
 
-print("Rosenbrock distribution benchmark complete. Check the output directory for plots.")
+print(
+    f"Rosenbrock distribution benchmark complete "
+    f"(initialization={INITIALIZATION_MODE}). Results: {outdir}"
+)
