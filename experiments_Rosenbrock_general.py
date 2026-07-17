@@ -21,6 +21,7 @@ from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 from experiment_diagnostics import worst_coordinate_ess, evaluation_count, update_seed_manifest
 
 N_CHAINS = 100
+INITIALIZATION_CHOICES = ("oracle", "agnostic")
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -48,6 +49,14 @@ def parse_args():
     parser.add_argument('--n-chains', type=int, default=N_CHAINS)
     parser.add_argument('--n-thin', type=int, default=1,
                         help='Transitions per saved draw; use 1 for reliable ESS estimates.')
+    parser.add_argument(
+        '--initialization',
+        choices=INITIALIZATION_CHOICES,
+        default=os.environ.get("ROSENBROCK_INITIALIZATION", "oracle").lower(),
+        help=("Initial ensemble in the intrinsic Rosenbrock frame: 'oracle' "
+              "uses exact target draws; 'agnostic' uses independent N(0, 2^2) "
+              "coordinates (default: %(default)s)."),
+    )
 
     return parser.parse_args()
 
@@ -58,6 +67,7 @@ af = args.af
 gpu = args.gpu
 cond = args.cond
 seed = args.seed
+INITIALIZATION_MODE = args.initialization
 
 if gpu is not None:
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
@@ -228,6 +238,14 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
     def sample_initial_ensemble(n_chains, seed):
         rng = np.random.default_rng(seed)
+
+        if INITIALIZATION_MODE == "agnostic":
+            # Do not encode the Rosenbrock valley y ~= x**2.  Every intrinsic
+            # coordinate starts independently in an isotropic, overdispersed
+            # cloud, so warmup/burn-in must discover the target geometry.
+            return 2.0 * rng.standard_normal((n_chains, dim))
+
+        # Oracle initialization: exact draws from the paired Rosenbrock target.
         u = np.empty((n_chains, dim), dtype=float)
         x_odd = a + sigma * rng.standard_normal((n_chains, dim // 2))
         x_even = x_odd**2 + (sigma / np.sqrt(b)) * rng.standard_normal((n_chains, dim // 2))
@@ -515,8 +533,13 @@ else:
     afstring = ''
 
 
-#make directories
-base_outdir = f"RosenbrockResultsC/{cond}c"
+# Keep agnostic runs separate so they cannot overwrite oracle condition runs.
+results_root = (
+    "RosenbrockResultsC_agnostic"
+    if INITIALIZATION_MODE == "agnostic"
+    else "RosenbrockResultsC"
+)
+base_outdir = f"{results_root}/{cond}c"
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = os.path.join(outdir, "corner")
 trends_dir = os.path.join(outdir, "trends")
@@ -580,6 +603,12 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
         "n_thin": args.n_thin,
         "n_chains": args.n_chains,
         "af": af,
+        "initialization_mode": INITIALIZATION_MODE,
+        "initialization_description": (
+            "independent N(0, 2^2) coordinates in the intrinsic Rosenbrock frame"
+            if INITIALIZATION_MODE == "agnostic"
+            else "exact draws from the paired Rosenbrock target"
+        ),
         "transform_affine": bool(transform["affine"]),
         "overlay_rosenbrock": overlay,
         "summary": summary,
@@ -602,7 +631,8 @@ update_seed_manifest(
     base_outdir, seed, outdir,
     {"dim": d, "condition_number": cond, "affine": af,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
-     "n_thin": args.n_thin, "n_chains": args.n_chains},
+     "n_thin": args.n_thin, "n_chains": args.n_chains,
+     "initialization_mode": INITIALIZATION_MODE},
 )
 
 # Plot the results
