@@ -20,12 +20,12 @@ from samplers.samplers import stretch_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 from experiment_diagnostics import worst_coordinate_ess, evaluation_count, update_seed_manifest
 
-N_CHAINS = 100
+N_CHAINS = 300
 
 # The standard entry point remains the oracle/stationary benchmark.  The
 # separate experiments_Rosenbrock_M_agnostic.py launcher sets this environment
 # variable so its results cannot be mixed with oracle-initialized runs.
-INITIALIZATION_MODE = os.environ.get("ROSENBROCK_INITIALIZATION", "oracle").lower()
+INITIALIZATION_MODE = os.environ.get("ROSENBROCK_INITIALIZATION", "agnostic").lower()
 if INITIALIZATION_MODE not in {"oracle", "agnostic"}:
     raise ValueError(
         "ROSENBROCK_INITIALIZATION must be either 'oracle' or 'agnostic'"
@@ -267,10 +267,10 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     
     # Define samplers to benchmark - parameters tuned for the ring distribution
     samplers = {
-        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, n_thin=n_thin, max_tree_depth=13, seed=seed, progress_bar=False),
+        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, n_thin=n_thin, max_tree_depth=8, seed=seed, progress_bar=False),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial, total_samples,
-            n_walkers=n_chains, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
+            n_walkers=300, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
         ),        
         "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=n_chains, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
         "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed),

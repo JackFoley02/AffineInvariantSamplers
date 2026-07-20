@@ -52,8 +52,8 @@ def parse_args():
     parser.add_argument(
         '--initialization',
         choices=INITIALIZATION_CHOICES,
-        default=os.environ.get("ROSENBROCK_INITIALIZATION", "oracle").lower(),
-        help=("Initial ensemble in the intrinsic Rosenbrock frame: 'oracle' "
+        default=os.environ.get("ROSENBROCK_INITIALIZATION", "agnostic").lower(),
+        help=("Initial ensemble in the intrinsic Rosenbrock frame: agnostic "
               "uses exact target draws; 'agnostic' uses independent N(0, 2^2) "
               "coordinates (default: %(default)s)."),
     )
@@ -115,7 +115,7 @@ def affine_transform(dim, max_dim=128, seed=4321, trans_scale=2.0, cond=cond):
 
     return A, B, Ainv
 
-def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, sigma=0.7, a = 1.0, b = 100.0, affine = False, seed=0, n_warmup=1000, n_chains=N_CHAINS, n_thin=1):
+def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, sigma=1.5, a = 1.0, b = 100.0, affine = False, seed=0, n_warmup=1000, n_chains=N_CHAINS, n_thin=1):
     """
     Benchmark different MCMC samplers on a Rosenbrock distribution of any EVEN dimension.
     
@@ -224,7 +224,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         return gz
     
 
-    def log_density_jax(x, a = 1.0, b = 100.0, sigma = 0.7):
+    def log_density_jax(x, a = 1.0, b = 100.0, sigma = 1.5):
         x = jnp.asarray(x)
 
         u = (x - B_jax) @ AiT_jax
@@ -389,7 +389,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
     return results, sigma, log_density, transformation
 
-def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = {'affine':False}, output_dir=None):
+def plot_Rosenbrock_results(results, log_density, dim=2, sigma=1.5, transform = {'affine':False}, output_dir=None):
     """Plot comparison of sampler results for ring distribution"""
     samplers = list(results.keys())
 
@@ -402,7 +402,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
         print("Skipping Rosenbrock overlay plot: need at least 2 dimensions.")
         return
 
-    def rosenbrock_2d_log_density(x, y, sigma=0.7, a=1.0, b=100.0):
+    def rosenbrock_2d_log_density(x, y, sigma=1.5, a=1.0, b=100.0):
         R = (a - x)**2 + b * (y - x**2)**2
         return -0.5 * R / (sigma**2)
 

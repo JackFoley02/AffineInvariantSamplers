@@ -71,7 +71,7 @@ def create_high_dim_precision(dim, condition_number=1.0):
     Q, R = np.linalg.qr(H)
     
     # Create eigenvalues with desired condition number
-    eigenvalues = 0.1* np.linspace(1, condition_number, dim)
+    eigenvalues = 0.1 * np.linspace(1, condition_number, dim)
     
     # Construct precision matrix: Q @ diag(eigenvalues) @ Q.T
     precision = Q @ np.diag(eigenvalues) @ Q.T
@@ -213,7 +213,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
         "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, n_thin=n_thin, max_tree_depth=13, seed=seed, progress_bar=False),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial, total_samples,
-            n_walkers=n_chains, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
+            n_walkers=300, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
         ),        
         "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=n_chains, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
         "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed),
