@@ -1,0 +1,37 @@
+{
+  "dim": 40,
+  "af": true,
+  "transform_affine": true,
+  "summary": {
+    "Mass-tuned HMC": {
+      "distribution": "Gaussian",
+      "tau": 10760.29296875,
+      "tau_std": 3630.201904296875,
+      "ess": 9.293434143066406,
+      "time": 745.6182727813721,
+      "sigma": 0.0,
+      "epsilon": 0.8901707530021667,
+      "n_leapfrog": 2,
+      "n_warmup": 5000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Hamiltonian Walk Move": {
+      "distribution": "Gaussian",
+      "tau": 1.0026153326034546,
+      "tau_std": 0.012386110611259937,
+      "ess": 99739.2734375,
+      "time": 370.0153443813324,
+      "sigma": 0.0,
+      "epsilon": 0.7187434434890747,
+      "n_leapfrog": 2,
+      "n_warmup": 5000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    }
+  }
+}

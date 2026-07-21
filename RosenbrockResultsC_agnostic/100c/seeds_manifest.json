@@ -1,0 +1,64 @@
+{
+  "runs": [
+    {
+      "seed": 0,
+      "directory": "seeds/seed_00000",
+      "dim": 32,
+      "condition_number": 100.0,
+      "affine": true,
+      "n_samples": 10000,
+      "burn_in": 1000,
+      "n_thin": 1,
+      "n_chains": 100,
+      "initialization_mode": "agnostic"
+    },
+    {
+      "seed": 1,
+      "directory": "seeds/seed_00001",
+      "dim": 32,
+      "condition_number": 100.0,
+      "affine": true,
+      "n_samples": 10000,
+      "burn_in": 1000,
+      "n_thin": 1,
+      "n_chains": 100,
+      "initialization_mode": "agnostic"
+    },
+    {
+      "seed": 2,
+      "directory": "seeds/seed_00002",
+      "dim": 32,
+      "condition_number": 100.0,
+      "affine": true,
+      "n_samples": 10000,
+      "burn_in": 1000,
+      "n_thin": 1,
+      "n_chains": 100,
+      "initialization_mode": "agnostic"
+    },
+    {
+      "seed": 3,
+      "directory": "seeds/seed_00003",
+      "dim": 32,
+      "condition_number": 100.0,
+      "affine": true,
+      "n_samples": 10000,
+      "burn_in": 1000,
+      "n_thin": 1,
+      "n_chains": 100,
+      "initialization_mode": "agnostic"
+    },
+    {
+      "seed": 4,
+      "directory": "seeds/seed_00004",
+      "dim": 32,
+      "condition_number": 100.0,
+      "affine": true,
+      "n_samples": 10000,
+      "burn_in": 1000,
+      "n_thin": 1,
+      "n_chains": 100,
+      "initialization_mode": "agnostic"
+    }
+  ]
+}

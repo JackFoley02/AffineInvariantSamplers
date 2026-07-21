@@ -1,0 +1,67 @@
+{
+  "dim": 4,
+  "af": false,
+  "transform_affine": false,
+  "summary": {
+    "Dense-mass NUTS": {
+      "distribution": "Gaussian",
+      "tau": 0.5888607012905344,
+      "tau_std": 0.245069653239531,
+      "ess": 171.09100247233545,
+      "time": 216.13754987716675,
+      "sigma": 0.0,
+      "epsilon": 0.705369234085083,
+      "n_leapfrog": 2,
+      "n_warmup": 1000,
+      "target_accept": 0.8,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Hamiltonian Walk Move": {
+      "distribution": "Gaussian",
+      "tau": 1.020034125288971,
+      "tau_std": 0.043038424041815765,
+      "ess": 9808.101769609362,
+      "time": 232.95957732200623,
+      "sigma": 0.0,
+      "epsilon": 1.0,
+      "n_leapfrog": 1,
+      "n_warmup": 1000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Stretch Move": {
+      "distribution": "Gaussian",
+      "tau": 3.947054800427749,
+      "tau_std": 0.11157458437556393,
+      "ess": 2533.5585639390065,
+      "time": 9.05354905128479,
+      "sigma": 0.0,
+      "epsilon": 0.0,
+      "n_leapfrog": null,
+      "n_warmup": null,
+      "target_accept": null,
+      "gamma": null,
+      "t0": null,
+      "kappa": null
+    },
+    "HMC": {
+      "distribution": "Gaussian",
+      "tau": 78.85327854502403,
+      "tau_std": 17.597730442777635,
+      "ess": 129.41281171820532,
+      "time": 86.79674172401428,
+      "sigma": 0.0,
+      "epsilon": 0.10000000149011612,
+      "n_leapfrog": 2,
+      "n_warmup": 1000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    }
+  }
+}

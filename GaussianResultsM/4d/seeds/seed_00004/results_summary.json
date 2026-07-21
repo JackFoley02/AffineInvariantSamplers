@@ -1,0 +1,133 @@
+{
+  "dim": 4,
+  "seed": 4,
+  "condition_number": 50.0,
+  "n_samples": 10000,
+  "burn_in": 1000,
+  "n_thin": 1,
+  "n_chains": 16,
+  "af": false,
+  "transform_affine": false,
+  "summary": {
+    "Dense-mass NUTS": {
+      "distribution": "Gaussian",
+      "tau": 1.0167477119701935,
+      "tau_std": 0.006589452449505284,
+      "ess": 157364.50460258374,
+      "ess_by_coordinate": [
+        158794.75188437983,
+        159834.58936167258,
+        159941.5082196645,
+        157364.50460258374
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 817374.5454545454,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.19252435187478548,
+      "time": 16.494574308395386,
+      "sigma": 0.0,
+      "epsilon": 0.7987340092658997,
+      "n_leapfrog": 5.108590909090909,
+      "n_warmup": 1000,
+      "target_accept": 0.8,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Hamiltonian Walk Move": {
+      "distribution": "Gaussian",
+      "tau": 1.2130958371375107,
+      "tau_std": 0.02565193645155217,
+      "ess": 131893.9486080053,
+      "ess_by_coordinate": [
+        131893.9486080053,
+        139158.80400496483,
+        132982.81373335043,
+        136953.09748193313
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 1120000.0,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.11776245411429045,
+      "time": 15.465811014175415,
+      "sigma": 0.0,
+      "epsilon": 1.044571876525879,
+      "n_leapfrog": 6,
+      "n_warmup": 1000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Stretch Move": {
+      "distribution": "Gaussian",
+      "tau": 48.79412815852684,
+      "tau_std": 3.0216454657392635,
+      "ess": 3279.0830790167483,
+      "ess_by_coordinate": [
+        3953.366745693849,
+        3462.7527433941523,
+        3499.2017176149056,
+        3279.0830790167483
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 160000.0,
+      "evaluation_type": "function",
+      "ess_per_eval": 0.02049426924385468,
+      "time": 0.780585765838623,
+      "sigma": 0.0,
+      "epsilon": 0.0,
+      "n_leapfrog": null,
+      "n_warmup": null,
+      "target_accept": null,
+      "gamma": null,
+      "t0": null,
+      "kappa": null
+    },
+    "HMC": {
+      "distribution": "Gaussian",
+      "tau": 2.0831590455991504,
+      "tau_std": 0.05541149808263316,
+      "ess": 76806.4254805765,
+      "ess_by_coordinate": [
+        77213.223250348,
+        82169.11716924713,
+        76806.4254805765,
+        79997.87573020217
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 320000.0,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.24002007962680155,
+      "time": 8.026691675186157,
+      "sigma": 0.0,
+      "epsilon": 3.353130578994751,
+      "n_leapfrog": 1,
+      "n_warmup": 1000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    }
+  }
+}

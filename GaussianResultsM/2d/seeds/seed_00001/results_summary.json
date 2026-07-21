@@ -1,0 +1,117 @@
+{
+  "dim": 2,
+  "seed": 1,
+  "condition_number": 50.0,
+  "n_samples": 10000,
+  "burn_in": 1000,
+  "n_thin": 1,
+  "n_chains": 16,
+  "af": false,
+  "transform_affine": false,
+  "summary": {
+    "Dense-mass NUTS": {
+      "distribution": "Gaussian",
+      "tau": 1.1570495648467507,
+      "tau_std": 0.017618173932839043,
+      "ess": 138282.75370484387,
+      "ess_by_coordinate": [
+        138282.75370484387,
+        142626.23900133595
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 616341.8181818181,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.22436049222292273,
+      "time": 16.13262152671814,
+      "sigma": 0.0,
+      "epsilon": 0.9069133400917053,
+      "n_leapfrog": 3.8521363636363635,
+      "n_warmup": 1000,
+      "target_accept": 0.8,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Hamiltonian Walk Move": {
+      "distribution": "Gaussian",
+      "tau": 1.0,
+      "tau_std": 0.0,
+      "ess": 160000.0,
+      "ess_by_coordinate": [
+        160000.0,
+        160000.0
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 480000.0,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.3333333333333333,
+      "time": 11.897114753723145,
+      "sigma": 0.0,
+      "epsilon": 1.2967844009399414,
+      "n_leapfrog": 2,
+      "n_warmup": 1000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Stretch Move": {
+      "distribution": "Gaussian",
+      "tau": 23.62134884749454,
+      "tau_std": 0.9633777118790423,
+      "ess": 6773.533595943265,
+      "ess_by_coordinate": [
+        6773.533595943265,
+        7375.109405135983
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 160000.0,
+      "evaluation_type": "function",
+      "ess_per_eval": 0.04233458497464541,
+      "time": 0.8223519325256348,
+      "sigma": 0.0,
+      "epsilon": 0.0,
+      "n_leapfrog": null,
+      "n_warmup": null,
+      "target_accept": null,
+      "gamma": null,
+      "t0": null,
+      "kappa": null
+    },
+    "HMC": {
+      "distribution": "Gaussian",
+      "tau": 1.0651029978554551,
+      "tau_std": 0.0016606224671457115,
+      "ess": 150220.21374660853,
+      "ess_by_coordinate": [
+        150220.21374660853,
+        150690.10138835927
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 320000.0,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.46943816795815163,
+      "time": 7.8053600788116455,
+      "sigma": 0.0,
+      "epsilon": 3.7570087909698486,
+      "n_leapfrog": 1,
+      "n_warmup": 1000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    }
+  }
+}

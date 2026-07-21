@@ -1,0 +1,140 @@
+{
+  "dim": 4,
+  "seed": 3,
+  "condition_number": 50,
+  "n_samples": 10000,
+  "burn_in": 1000,
+  "n_thin": 1,
+  "n_chains": 16,
+  "af": false,
+  "initialization_mode": "agnostic",
+  "initialization_description": "independent N(0, 2^2) coordinates in the intrinsic Rosenbrock frame",
+  "transform_affine": false,
+  "overlay_rosenbrock": {
+    "a": 1.0,
+    "b": 100.0,
+    "sigma": 0.7
+  },
+  "summary": {
+    "Dense-mass NUTS": {
+      "distribution": "Paired Rosenbrock",
+      "tau": 12.880354276301688,
+      "tau_std": 0.46430488540804177,
+      "ess": 12422.018569347962,
+      "ess_by_coordinate": [
+        13149.567593586951,
+        13755.597477351414,
+        13439.520725992728,
+        12422.018569347962
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 5625114.545454545,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.00220831388747199,
+      "time": 124.19367241859436,
+      "sigma": 0.7,
+      "epsilon": 0.052995987236499786,
+      "n_leapfrog": 35.15696590909091,
+      "n_warmup": 1000,
+      "target_accept": 0.8,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Hamiltonian Walk Move": {
+      "distribution": "Paired Rosenbrock",
+      "tau": 196.24703354288454,
+      "tau_std": 23.011458256014077,
+      "ess": 815.2989480222451,
+      "ess_by_coordinate": [
+        915.9767998085582,
+        1169.6008024913153,
+        844.4863542552343,
+        815.2989480222451
+      ],
+      "ess_valid_fraction": [
+        0.8125,
+        0.9375,
+        0.6875,
+        0.75
+      ],
+      "n_evaluations": 1120000.0,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.000727945489305576,
+      "time": 17.104249000549316,
+      "sigma": 0.7,
+      "epsilon": 0.042866989970207214,
+      "n_leapfrog": 6,
+      "n_warmup": 1000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    },
+    "Stretch Move": {
+      "distribution": "Paired Rosenbrock",
+      "tau": 646.8279107542751,
+      "tau_std": 114.05979588582323,
+      "ess": 247.3610018055989,
+      "ess_by_coordinate": [
+        355.6186077061212,
+        484.0941670940129,
+        247.3610018055989,
+        364.4215215731194
+      ],
+      "ess_valid_fraction": [
+        0.5,
+        0.6875,
+        0.375,
+        0.5625
+      ],
+      "n_evaluations": 160000.0,
+      "evaluation_type": "function",
+      "ess_per_eval": 0.0015460062612849932,
+      "time": 0.874157190322876,
+      "sigma": 0.7,
+      "epsilon": 0.0,
+      "n_leapfrog": null,
+      "n_warmup": null,
+      "target_accept": null,
+      "gamma": null,
+      "t0": null,
+      "kappa": null
+    },
+    "HMC": {
+      "distribution": "Paired Rosenbrock",
+      "tau": 2.5728671123592193,
+      "tau_std": 0.44101237675980004,
+      "ess": 62187.43254613186,
+      "ess_by_coordinate": [
+        98016.02272954621,
+        64405.63015242588,
+        96051.27941993848,
+        62187.43254613186
+      ],
+      "ess_valid_fraction": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n_evaluations": 35680000.0,
+      "evaluation_type": "gradient",
+      "ess_per_eval": 0.0017429213157548167,
+      "time": 55.8675217628479,
+      "sigma": 0.7,
+      "epsilon": 0.023037977516651154,
+      "n_leapfrog": 222,
+      "n_warmup": 1000,
+      "target_accept": 0.651,
+      "gamma": 0.05,
+      "t0": 10,
+      "kappa": 0.75
+    }
+  }
+}
