@@ -191,7 +191,13 @@ def hmc_nuts(
     # evaluations, not tree depth (2**round(mean(log2(n))) is biased).
     parmslist = [mean_num_steps, n_warmup, target_accept, 0.05, 10, 0.75]
 
-    return samples, acceptance_rates, final_eps, eps_hist, parmslist
+    info = {
+        "acceptance_rate": float(np.nanmean(acceptance_rates)),
+        "mean_L": mean_num_steps,
+        "n_divergent": n_divergent,
+        "n_chains": n_chains,
+    }
+    return samples, acceptance_rates, final_eps, eps_hist, parmslist, info
 
 
 # Alias for drop-in experiments that expect the old HMC function name.

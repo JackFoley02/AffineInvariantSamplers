@@ -2,6 +2,7 @@
 import numpy as np
 import json
 import os
+from datetime import datetime, timezone
 
 
 #some constants
@@ -47,7 +48,16 @@ for idx, c in enumerate(COND):
     ESS_bot[3, idx] = np.nanmin(dim_results_HMC)
 
     
-arrays = {'ESS_med':ESS_med, 'ESS_top':ESS_top, 'ESS_bot':ESS_bot}
+arrays = {
+    'ESS_med': ESS_med, 'ESS_top': ESS_top, 'ESS_bot': ESS_bot,
+    'axis_values': np.asarray(COND, dtype=float),
+    'method_names': np.asarray(['Dense-mass NUTS', 'Hamiltonian Walk Move', 'Stretch Move', 'HMC']),
+    'metadata_json': np.asarray(json.dumps({
+        'distribution': DISTRIBUTION, 'result_root': f'{DISTRIBUTION}ResultsC_agnostic',
+        'seeds': SEEDS, 'aggregation': {'center': 'nanmedian', 'top': 'nanmax', 'bottom': 'nanmin'},
+        'created_utc': datetime.now(timezone.utc).isoformat(),
+    })),
+}
 np.savez(f'{DISTRIBUTION}_cond_zipped_results.npz', **arrays)
 print('Saving Complete! Please transfer the arrays to your machine.')
 
@@ -92,14 +102,15 @@ for idx, c in enumerate(COND):
     ESS_bot[3, idx] = np.nanmin(dim_results_HMC)
 
     
-arrays = {'ESS_med':ESS_med, 'ESS_top':ESS_top, 'ESS_bot':ESS_bot}
+arrays = {
+    'ESS_med': ESS_med, 'ESS_top': ESS_top, 'ESS_bot': ESS_bot,
+    'axis_values': np.asarray(COND, dtype=float),
+    'method_names': np.asarray(['Dense-mass NUTS', 'Hamiltonian Walk Move', 'Stretch Move', 'HMC']),
+    'metadata_json': np.asarray(json.dumps({
+        'distribution': DISTRIBUTION, 'result_root': f'{DISTRIBUTION}ResultsC',
+        'seeds': SEEDS, 'aggregation': {'center': 'nanmedian', 'top': 'nanmax', 'bottom': 'nanmin'},
+        'created_utc': datetime.now(timezone.utc).isoformat(),
+    })),
+}
 np.savez(f'{DISTRIBUTION}_cond_zipped_results.npz', **arrays)
 print('Saving Complete! Please transfer the arrays to your machine.')
-
-
-
-            
-
-        
-        
-        

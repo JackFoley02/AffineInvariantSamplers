@@ -6,6 +6,7 @@ from plotTools.benchmark_trends import benchmark_trends
 from plotTools.benchmark_autocorrelation import benchmark_autocorrelation
 from matplotlib import rc
 import os
+os.environ.setdefault("JAX_ENABLE_X64", "True")
 import json
 import traceback
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -18,9 +19,11 @@ from samplers.sampler_peachees import hamiltonian_walk_chees
 from samplers.sampler_chees import hmc_chees
 from samplers.samplers import stretch_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
-from experiment_diagnostics import worst_coordinate_ess, evaluation_count, update_seed_manifest
+from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
+                                    sample_health_diagnostics,
+                                    rosenbrock_moment_errors, update_seed_manifest)
 
-N_CHAINS = 300
+N_CHAINS = 150
 
 # The standard entry point remains the oracle/stationary benchmark.  The
 # separate experiments_Rosenbrock_M_agnostic.py launcher sets this environment
@@ -49,12 +52,14 @@ def parse_args():
     parser.add_argument("--no-report", action="store_true")
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument("--gpu", type = int, default=None)
-    parser.add_argument('--cond', type = int, default = 50)
+    parser.add_argument('--cond', type = float, default = 50)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--n-samples', type=int, default=10000)
     parser.add_argument('--burn-in', type=int, default=1000)
     parser.add_argument('--n-warmup', type=int, default=1000)
     parser.add_argument('--n-chains', type=int, default=N_CHAINS)
+    parser.add_argument('--hwm-walkers', type=int, default=300,
+                        help='Walker count used only by Hamiltonian Walk Move.')
     parser.add_argument('--n-thin', type=int, default=1)
 
     return parser.parse_args()
@@ -72,6 +77,7 @@ if gpu is not None:
 
 #import jax after setting default CUDA device 
 import jax
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 if (d % 2) != 0:
@@ -256,8 +262,12 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
         return u
 
-    u0 = sample_initial_ensemble(n_chains, seed)
-    initial = u0 @ A.T + B
+    hwm_walkers = int(args.hwm_walkers)
+    if hwm_walkers < 4 or hwm_walkers % 2:
+        raise ValueError("--hwm-walkers must be an even integer >= 4")
+    u0_all = sample_initial_ensemble(max(n_chains, hwm_walkers), seed)
+    initial = u0_all[:n_chains] @ A.T + B
+    initial_hwm = u0_all[:hwm_walkers] @ A.T + B
     
     # Dictionary to store results
     results = {}
@@ -269,8 +279,8 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     samplers = {
         "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, n_thin=n_thin, max_tree_depth=8, seed=seed, progress_bar=False),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
-            log_density_jax, initial, total_samples,
-            n_walkers=300, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
+            log_density_jax, initial_hwm, total_samples,
+            n_walkers=hwm_walkers, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
         ),        
         "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=n_chains, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
         "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed),
@@ -295,6 +305,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
                 n_leapfrog, sampler_n_warmup, target_accept, gamma, t0, kappa = out[4]
             else:
                 n_leapfrog = sampler_n_warmup = target_accept = gamma = t0 = kappa = None
+            sampler_info = out[5] if len(out) > 5 and isinstance(out[5], dict) else {}
             # Apply burn-in: discard the first burn_in samples
             post_burn_in_samples = samples[:, burn_in:, :]
             series = post_burn_in_samples
@@ -333,10 +344,16 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             burn_in_samps = np.zeros((1, 0, dim))
             eps_final, eps_hist = 0.0, np.asarray([])
             n_leapfrog = sampler_n_warmup = target_accept = gamma = t0 = kappa = None
+            sampler_info = {}
         
         elapsed = time.time() - start_time
         n_evaluations, evaluation_type = evaluation_count(name, len(acceptance_rates), n_samples, n_thin, n_leapfrog)
         ess_per_eval = ess / n_evaluations if np.isfinite(ess) and np.isfinite(n_evaluations) else np.nan
+        transform_now = {"affine": affine, "A": A, "B": B}
+        health = sample_health_diagnostics(series, transform_now)
+        moment_errors = rosenbrock_moment_errors(
+            series, transform_now, a=a, b=b, sigma=sigma
+        )
         
         # Store results
         results[name] = {
@@ -367,6 +384,12 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             "gamma":gamma,
             "t0":t0,
             "kappa":kappa
+            ,"acceptance_rate_mean": float(np.nanmean(acceptance_rates))
+            ,"acceptance_rate_min": float(np.nanmin(acceptance_rates))
+            ,"acceptance_rate_max": float(np.nanmax(acceptance_rates))
+            ,"n_divergent": sampler_info.get("n_divergent")
+            ,**health
+            ,**moment_errors
         }
         
         print(f"  Acceptance rate: {np.mean(acceptance_rates):.2f}")
@@ -587,6 +610,18 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
             "gamma": r["gamma"],
             "t0": r["t0"],
             "kappa": r["kappa"],
+            "mean_mse": float(r["mean_mse"]),
+            "cov_mse": float(r["cov_mse"]),
+            "acceptance_rate_mean": r["acceptance_rate_mean"],
+            "acceptance_rate_min": r["acceptance_rate_min"],
+            "acceptance_rate_max": r["acceptance_rate_max"],
+            "n_divergent": r["n_divergent"],
+            "actual_n_chains": r["actual_n_chains"],
+            "diagnostic_draws_per_chain": r["diagnostic_draws_per_chain"],
+            "sample_finite_fraction": r["sample_finite_fraction"],
+            "finite_draw_fraction": r["finite_draw_fraction"],
+            "sample_covariance_rank": r["sample_covariance_rank"],
+            "sample_covariance_full_rank": r["sample_covariance_full_rank"],
         }
 
     metadata = {
@@ -597,6 +632,8 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
         "burn_in": args.burn_in,
         "n_thin": args.n_thin,
         "n_chains": args.n_chains,
+        "hwm_walkers_requested": args.hwm_walkers,
+        "jax_enable_x64": bool(jax.config.jax_enable_x64),
         "af": af,
         "initialization_mode": INITIALIZATION_MODE,
         "initialization_description": (
@@ -627,7 +664,8 @@ update_seed_manifest(
     {"dim": d, "condition_number": cond, "affine": af,
      "initialization_mode": INITIALIZATION_MODE,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
-     "n_thin": args.n_thin, "n_chains": args.n_chains},
+     "n_thin": args.n_thin, "n_chains": args.n_chains,
+     "hwm_walkers": args.hwm_walkers, "jax_enable_x64": True},
 )
 
 # Plot the results

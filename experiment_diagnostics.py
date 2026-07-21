@@ -82,6 +82,62 @@ def evaluation_count(name, n_chains, n_saved, n_thin, n_leapfrog):
     return n_chains * transitions * per_transition, "gradient"
 
 
+def _diagnostic_subsample(samples, max_draws_per_chain=200):
+    """Bound the memory cost of multivariate diagnostics on large runs."""
+    samples = np.asarray(samples)
+    stride = max(1, int(np.ceil(samples.shape[1] / max_draws_per_chain)))
+    return samples[:, ::stride, :]
+
+
+def sample_health_diagnostics(samples, transform):
+    """Cheap correctness/health checks that complement coordinate-wise ESS."""
+    rest = to_rest_frame(_diagnostic_subsample(samples), transform)
+    finite = np.isfinite(rest)
+    finite_draws = np.all(finite, axis=-1)
+    flat = rest.reshape(-1, rest.shape[-1])
+    flat = flat[np.all(np.isfinite(flat), axis=1)]
+    if flat.shape[0] < 2:
+        rank = 0
+    else:
+        rank = int(np.linalg.matrix_rank(np.cov(flat, rowvar=False)))
+    return {
+        "actual_n_chains": int(rest.shape[0]),
+        "diagnostic_draws_per_chain": int(rest.shape[1]),
+        "sample_finite_fraction": float(np.mean(finite)),
+        "finite_draw_fraction": float(np.mean(finite_draws)),
+        "sample_covariance_rank": rank,
+        "sample_covariance_full_rank": bool(rank == rest.shape[-1]),
+    }
+
+
+def rosenbrock_moment_errors(samples, transform, a=1.0, b=100.0, sigma=0.7):
+    """Rest-frame mean/covariance errors for the paired Rosenbrock target."""
+    rest = to_rest_frame(_diagnostic_subsample(samples), transform)
+    flat = rest.reshape(-1, rest.shape[-1])
+    flat = flat[np.all(np.isfinite(flat), axis=1)]
+    if flat.shape[0] < 2:
+        return {"mean_mse": np.nan, "cov_mse": np.nan}
+
+    target_mean = np.empty(rest.shape[-1])
+    target_mean[0::2] = a
+    target_mean[1::2] = a**2 + sigma**2
+
+    pair_cov = np.array([
+        [sigma**2, 2.0 * a * sigma**2],
+        [2.0 * a * sigma**2,
+         4.0 * a**2 * sigma**2 + 2.0 * sigma**4 + sigma**2 / b],
+    ])
+    target_cov = np.kron(np.eye(rest.shape[-1] // 2), pair_cov)
+    sample_mean = np.mean(flat, axis=0)
+    sample_cov = np.cov(flat, rowvar=False)
+    return {
+        "mean_mse": float(np.mean((sample_mean - target_mean) ** 2)),
+        "cov_mse": float(
+            np.sum((sample_cov - target_cov) ** 2) / np.sum(target_cov**2)
+        ),
+    }
+
+
 def update_seed_manifest(base_dir, seed, run_dir, metadata):
     """Maintain a lightweight index without mixing arrays from different seeds."""
     base = Path(base_dir)

@@ -127,7 +127,10 @@ def _da_init(log_eps0):
 
 def _da_update(state, log_alpha, log_eps0, target, t0=10., gamma=0.05, kappa=0.75):
     it     = state.iteration + 1
-    accept = log_alpha.size / jnp.sum(1. / jnp.clip(jnp.exp(log_alpha), 1e-10, 1.))
+    # Dual averaging targets the mean Metropolis acceptance probability
+    # across chains.  A harmonic mean lets one poor proposal collapse the
+    # shared step size even when the rest of the chains are well calibrated.
+    accept = jnp.mean(jnp.exp(jnp.minimum(log_alpha, 0.)))
     eta    = 1. / (it + t0)
     H_bar  = (1. - eta) * state.H_bar + eta * (target - accept)
     log_e  = log_eps0 - jnp.sqrt(it) / gamma * H_bar
@@ -207,7 +210,8 @@ def _find_init_eps(key, positions, log_prob, grad_U, eps0):
         k, k1 = jax.random.split(k)
         eps = (2.**d) * eps
         _, la, _, _ = _hmc_move(positions, eps, k1, log_prob, grad_U, 1, lp)
-        avg = jnp.log(la.shape[0]) - jax.scipy.special.logsumexp(-la)
+        # Stable log of the arithmetic mean acceptance probability.
+        avg = jax.scipy.special.logsumexp(jnp.minimum(la, 0.)) - jnp.log(la.shape[0])
         return eps, d, jnp.where(jnp.log(.8) < avg, 1, -1), k
 
     def cond(s):
@@ -375,18 +379,23 @@ def sampler_chees(
             positions, final_eps, k1, log_prob_fn, _grad_U, Lc, lp)
         positions, accept = _mh(positions, proposed, la, ka)
         lp = jnp.where(accept, lp_new, lp)
-        return (positions, lp, step_i + 1), (positions, accept.astype(float))
+        return (positions, lp, step_i + 1), (positions, accept.astype(float), Lc)
 
     key, k  = jax.random.split(key)
     flat    = jax.random.split(k, num_samples * thin_by * 2)
     skeys   = flat.reshape(num_samples * thin_by, 2, *flat.shape[1:])
-    (state, lp, _), (all_states, all_acc) = jax.lax.scan(
+    (state, lp, _), (all_states, all_acc, all_L) = jax.lax.scan(
         _step, (state, lp, jnp.int32(0)), skeys)
 
     samples = all_states[::thin_by]
+    total_L = int(jnp.sum(all_L))
+    n_iters = int(num_samples * thin_by)
+    n_grad_evals = (total_L + n_iters) * int(state.shape[0])
     info = dict(acceptance_rate=float(jnp.mean(all_acc)),
                 final_step_size=float(final_eps),
-                nominal_L=int(nominal_L))
+                nominal_L=int(nominal_L),
+                mean_L=float(jnp.mean(all_L)),
+                n_grad_evals=n_grad_evals)
     if verbose:
         print(f"Done.  accept={info['acceptance_rate']:.3f}")
     return samples, info
@@ -447,8 +456,8 @@ def hmc_chees(
     samples = np.asarray(samples).transpose(1, 0, 2)
     acceptance = np.full(n_chains, info["acceptance_rate"])
     eps_hist = np.asarray([info["final_step_size"]])
-    parmslist = [info["nominal_L"], n_warmup, target_accept, 0.05, 10, 0.75]
-    return samples, acceptance, info["final_step_size"], eps_hist, parmslist
+    parmslist = [info["mean_L"], n_warmup, target_accept, 0.05, 10, 0.75]
+    return samples, acceptance, info["final_step_size"], eps_hist, parmslist, info
 
 
 # ───────────────────────────────────────────────────────────────────────────────

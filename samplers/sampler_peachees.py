@@ -160,7 +160,10 @@ def _da_init(log_eps0):
 
 def _da_update(state, log_alpha, log_eps0, target, t0=10., gamma=0.05, kappa=0.75):
     it     = state.iteration + 1
-    accept = log_alpha.size / jnp.sum(1. / jnp.clip(jnp.exp(log_alpha), 1e-10, 1.))
+    # Dual averaging targets the mean Metropolis acceptance probability
+    # across walkers.  A harmonic mean is dominated by the single worst
+    # walker and can collapse the shared step size on heterogeneous targets.
+    accept = jnp.mean(jnp.exp(jnp.minimum(log_alpha, 0.)))
     eta    = 1. / (it + t0)
     H_bar  = (1. - eta) * state.H_bar + eta * (target - accept)
     log_e  = log_eps0 - jnp.sqrt(it) / gamma * H_bar
@@ -271,7 +274,9 @@ def _find_init_eps(key, g1, g2, log_prob, grad_U, eps0, move_fn):
         _, la1, _, _, _ = move_fn(g1, g2, eps, k1, log_prob, grad_U, 1, lp1)
         _, la2, _, _, _ = move_fn(g2, g1, eps, k2, log_prob, grad_U, 1, lp2)
         la  = jnp.concatenate([la1, la2])
-        avg = jnp.log(la.shape[0]) - jax.scipy.special.logsumexp(-la)
+        # Compare the log of the arithmetic mean acceptance probability with
+        # log(0.8).  logsumexp keeps this stable for very unlikely proposals.
+        avg = jax.scipy.special.logsumexp(jnp.minimum(la, 0.)) - jnp.log(la.shape[0])
         return eps, d, jnp.where(jnp.log(.8) < avg, 1, -1), k
 
     def cond(s):
@@ -519,7 +524,14 @@ def hamiltonian_walk_chees(
         initial = jnp.tile(initial[None, :], (n_walkers, 1))
         initial = initial + 0.1 * jax.random.normal(key, initial.shape)
     else:
-        n_walkers = int(initial.shape[0])
+        supplied_walkers = int(initial.shape[0])
+        if int(n_walkers) != supplied_walkers:
+            raise ValueError(
+                f"n_walkers={n_walkers} but initial contains "
+                f"{supplied_walkers} walkers; pass an initial ensemble with "
+                "one row per requested HWM walker"
+            )
+        n_walkers = supplied_walkers
 
     batched_log_prob = jax.vmap(log_prob)
     samples, info = sampler_peaches(
@@ -545,8 +557,10 @@ def hamiltonian_walk_chees(
     samples = np.asarray(samples).transpose(1, 0, 2)
     acceptance = np.full(n_walkers, info["acceptance_rate"])
     eps_hist = np.asarray([info["final_step_size"]])
-    parmslist = [info["nominal_L"], n_warmup, target_accept, 0.05, 10, 0.75]
-    return samples, acceptance, info["final_step_size"], eps_hist, parmslist
+    # The benchmark cost denominator needs the actual mean jittered trajectory
+    # length, not the nominal (unjittered) ChEES value.
+    parmslist = [info["mean_L"], n_warmup, target_accept, 0.05, 10, 0.75]
+    return samples, acceptance, info["final_step_size"], eps_hist, parmslist, info
 
 
 if __name__ == "__main__":

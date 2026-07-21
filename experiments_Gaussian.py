@@ -4,6 +4,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import time
 import os
+os.environ.setdefault("JAX_ENABLE_X64", "True")
 import argparse
 import json
 import traceback
@@ -15,7 +16,8 @@ from plotTools.benchmark_autocorrelation import benchmark_autocorrelation
 from plotTools.benchmark_corner import benchmark_corner
 from plotTools.benchmark_trends import benchmark_trends
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
-from experiment_diagnostics import worst_coordinate_ess, evaluation_count, update_seed_manifest
+from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
+                                    sample_health_diagnostics, update_seed_manifest)
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -37,6 +39,8 @@ def parse_args():
     parser.add_argument("--burn-in", type=int, default=1000)
     parser.add_argument("--n-warmup", type=int, default=1000)
     parser.add_argument("--n-chains", type=int, default=N_CHAINS)
+    parser.add_argument("--hwm-walkers", type=int, default=300,
+                        help="Walker count used only by Hamiltonian Walk Move.")
     parser.add_argument("--n-thin", type=int, default=1,
                         help="Transitions per saved draw; use 1 for reliable ESS estimates.")
     return parser.parse_args()
@@ -53,6 +57,7 @@ if gpu is not None:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
 import jax
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 
@@ -165,8 +170,14 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
         return result
 
     rng = np.random.default_rng(seed)
-    u0 = rng.multivariate_normal(true_mean, cov_matrix, size=n_chains)
-    initial = u0 @ A.T + B
+    hwm_walkers = int(args.hwm_walkers)
+    if hwm_walkers < 4 or hwm_walkers % 2:
+        raise ValueError("--hwm-walkers must be an even integer >= 4")
+    u0_all = rng.multivariate_normal(
+        true_mean, cov_matrix, size=max(n_chains, hwm_walkers)
+    )
+    initial = u0_all[:n_chains] @ A.T + B
+    initial_hwm = u0_all[:hwm_walkers] @ A.T + B
 
     results = {}
     total_samples = n_samples + burn_in
@@ -186,9 +197,9 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
         ),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax,
-            initial,
+            initial_hwm,
             total_samples,
-            n_walkers=n_chains,
+            n_walkers=hwm_walkers,
             epsilon=0.1,
             L=10,
             n_warmup=n_warmup,
@@ -232,6 +243,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             n_leapfrog, sampler_n_warmup, target_accept, gamma, t0, kappa = out[4]
         else:
             n_leapfrog = sampler_n_warmup = target_accept = gamma = t0 = kappa = None
+        sampler_info = out[5] if len(out) > 5 and isinstance(out[5], dict) else {}
 
         post_burn_in_samples = samples[:, burn_in:, :]
         burn_in_samps = samples[:, :burn_in, :]
@@ -259,6 +271,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             name, len(acceptance_rates), n_samples, n_thin, n_leapfrog
         )
         ess_per_eval = ess / n_evaluations if np.isfinite(ess) and np.isfinite(n_evaluations) else np.nan
+        health = sample_health_diagnostics(post_burn_in_samples, transform_now)
 
         results[name] = {
             "distribution": "Gaussian",
@@ -290,6 +303,11 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             "gamma": gamma,
             "t0": t0,
             "kappa": kappa,
+            "acceptance_rate_mean": float(np.nanmean(acceptance_rates)),
+            "acceptance_rate_min": float(np.nanmin(acceptance_rates)),
+            "acceptance_rate_max": float(np.nanmax(acceptance_rates)),
+            "n_divergent": sampler_info.get("n_divergent"),
+            **health,
         }
 
         print(f"  Acceptance rate: {np.mean(acceptance_rates):.2f}")
@@ -399,6 +417,18 @@ def save_light_results(results, transform, outdir, dim, af, cond):
             "gamma": r["gamma"],
             "t0": r["t0"],
             "kappa": r["kappa"],
+            "mean_mse": float(r["mean_mse"]),
+            "cov_mse": float(r["cov_mse"]),
+            "acceptance_rate_mean": r["acceptance_rate_mean"],
+            "acceptance_rate_min": r["acceptance_rate_min"],
+            "acceptance_rate_max": r["acceptance_rate_max"],
+            "n_divergent": r["n_divergent"],
+            "actual_n_chains": r["actual_n_chains"],
+            "diagnostic_draws_per_chain": r["diagnostic_draws_per_chain"],
+            "sample_finite_fraction": r["sample_finite_fraction"],
+            "finite_draw_fraction": r["finite_draw_fraction"],
+            "sample_covariance_rank": r["sample_covariance_rank"],
+            "sample_covariance_full_rank": r["sample_covariance_full_rank"],
         }
 
     metadata = {
@@ -408,6 +438,8 @@ def save_light_results(results, transform, outdir, dim, af, cond):
         "burn_in": args.burn_in,
         "n_thin": args.n_thin,
         "n_chains": args.n_chains,
+        "hwm_walkers_requested": args.hwm_walkers,
+        "jax_enable_x64": bool(jax.config.jax_enable_x64),
         "cond": cond,
         "af": af,
         "transform_affine": bool(transform["affine"]),
@@ -432,7 +464,8 @@ update_seed_manifest(
     base_outdir, seed, outdir,
     {"dim": d, "condition_number": cond, "affine": af,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
-     "n_thin": args.n_thin, "n_chains": args.n_chains},
+     "n_thin": args.n_thin, "n_chains": args.n_chains,
+     "hwm_walkers": args.hwm_walkers, "jax_enable_x64": True},
 )
 
 if not args.no_plots:
