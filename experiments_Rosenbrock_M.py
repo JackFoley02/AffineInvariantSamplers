@@ -24,6 +24,7 @@ from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     rosenbrock_moment_errors, update_seed_manifest)
 
 N_CHAINS = 150
+ROSENBROCK_SIGMA = 1.5
 
 # The standard entry point remains the oracle/stationary benchmark.  The
 # separate experiments_Rosenbrock_M_agnostic.py launcher sets this environment
@@ -119,7 +120,7 @@ def affine_transform(dim, max_dim=128, seed=4321, trans_scale=2.0, cond=cond):
 
     return A, B, Ainv
 
-def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, sigma=0.7, a=1.0, b=100.0,
+def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, sigma=ROSENBROCK_SIGMA, a=1.0, b=100.0,
                                           affine=False, seed=0, n_warmup=1000,
                                           n_chains=N_CHAINS, n_thin=1):
     """
@@ -230,7 +231,9 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         return gz
     
 
-    def log_density_jax(x, a = 1.0, b = 100.0, sigma = 0.7):
+    def log_density_jax(x):
+        # Use the same benchmark parameters as the NumPy density and target
+        # diagnostics; do not maintain a second set of silent defaults.
         x = jnp.asarray(x)
 
         u = (x - B_jax) @ AiT_jax
@@ -405,7 +408,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
     return results, sigma, log_density, transformation
 
-def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = {'affine':False}, output_dir=None):
+def plot_Rosenbrock_results(results, log_density, dim=2, sigma=ROSENBROCK_SIGMA, transform = {'affine':False}, output_dir=None):
     """Plot comparison of sampler results for ring distribution"""
     samplers = list(results.keys())
 
@@ -418,7 +421,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
         print("Skipping Rosenbrock overlay plot: need at least 2 dimensions.")
         return
 
-    def rosenbrock_2d_log_density(x, y, sigma=0.7, a=1.0, b=100.0):
+    def rosenbrock_2d_log_density(x, y, sigma=ROSENBROCK_SIGMA, a=1.0, b=100.0):
         R = (a - x)**2 + b * (y - x**2)**2
         return -0.5 * R / (sigma**2)
 
@@ -538,7 +541,8 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=0.7, transform = 
 # Run the benchmark for the Rosenbrock distribution
 # Note: You need to have the sampler functions (side_move, stretch_move, etc.) defined elsewhere
 results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(
-    dim=d, n_samples=args.n_samples, burn_in=args.burn_in, sigma=0.7,
+    dim=d, n_samples=args.n_samples, burn_in=args.burn_in,
+    sigma=ROSENBROCK_SIGMA,
     affine=af, seed=seed, n_warmup=args.n_warmup,
     n_chains=args.n_chains, n_thin=args.n_thin,
 )
@@ -671,7 +675,10 @@ update_seed_manifest(
 # Plot the results
 if not args.no_plots:
 
-    plot_Rosenbrock_results(results, log_density, dim=d, sigma=0.7, transform=transform, output_dir=outdir)
+    plot_Rosenbrock_results(
+        results, log_density, dim=d, sigma=ROSENBROCK_SIGMA,
+        transform=transform, output_dir=outdir
+    )
     benchmark_corner(results, corner_dir, thin = 10,  overlay_rosenbrock=overlay_rosenbrock, transform=transform)
     benchmark_trends(results, trends_dir, 'RosenbrockM')
     benchmark_autocorrelation(results, outdir, 'RosenbrockM')

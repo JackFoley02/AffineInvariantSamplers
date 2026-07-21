@@ -59,6 +59,34 @@
       "n_thin": 1,
       "n_chains": 100,
       "initialization_mode": "agnostic"
+    },
+    {
+      "seed": 93031,
+      "directory": "seeds/seed_93031",
+      "dim": 32,
+      "condition_number": 31.62,
+      "affine": true,
+      "n_samples": 500,
+      "burn_in": 1500,
+      "n_thin": 1,
+      "n_chains": 20,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true,
+      "initialization_mode": "agnostic"
+    },
+    {
+      "seed": 94031,
+      "directory": "seeds/seed_94031",
+      "dim": 32,
+      "condition_number": 31.62,
+      "affine": true,
+      "n_samples": 500,
+      "burn_in": 1000,
+      "n_thin": 1,
+      "n_chains": 20,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true,
+      "initialization_mode": "agnostic"
     }
   ]
 }

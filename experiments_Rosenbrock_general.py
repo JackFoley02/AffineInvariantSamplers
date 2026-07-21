@@ -24,6 +24,7 @@ from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     rosenbrock_moment_errors, update_seed_manifest)
 
 N_CHAINS = 150
+ROSENBROCK_SIGMA = 1.5
 INITIALIZATION_CHOICES = ("oracle", "agnostic")
 
 def parse_args():
@@ -230,7 +231,9 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         return gz
     
 
-    def log_density_jax(x, a = 1.0, b = 100.0, sigma = 1.5):
+    def log_density_jax(x):
+        # Close over the benchmark parameters so all samplers and diagnostics
+        # use the same requested Rosenbrock width.
         x = jnp.asarray(x)
 
         u = (x - B_jax) @ AiT_jax
@@ -547,7 +550,8 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=1.5, transform = 
 # Run the benchmark for the Rosenbrock distribution
 # Note: You need to have the sampler functions (side_move, stretch_move, etc.) defined elsewhere
 results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(
-    dim=d, n_samples=args.n_samples, burn_in=args.burn_in, sigma=0.7,
+    dim=d, n_samples=args.n_samples, burn_in=args.burn_in,
+    sigma=ROSENBROCK_SIGMA,
     affine=af, seed=seed, n_warmup=args.n_warmup, n_chains=args.n_chains,
     n_thin=args.n_thin
 )
@@ -564,7 +568,8 @@ results_root = (
     if INITIALIZATION_MODE == "agnostic"
     else "RosenbrockResultsC"
 )
-base_outdir = f"{results_root}/{cond}c"
+cond_string = f"{cond:g}c"
+base_outdir = f"{results_root}/{cond_string}"
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = os.path.join(outdir, "corner")
 trends_dir = os.path.join(outdir, "trends")
@@ -678,7 +683,10 @@ update_seed_manifest(
 # Plot the results
 if not args.no_plots:
 
-    plot_Rosenbrock_results(results, log_density, dim=d, sigma=0.7, transform=transform, output_dir=outdir)
+    plot_Rosenbrock_results(
+        results, log_density, dim=d, sigma=ROSENBROCK_SIGMA,
+        transform=transform, output_dir=outdir
+    )
     benchmark_corner(results, corner_dir, thin = 10,  overlay_rosenbrock=overlay_rosenbrock, transform=transform)
     benchmark_trends(results, trends_dir, 'RosenbrockC')
     benchmark_autocorrelation(results, outdir, 'RosenbrockC')

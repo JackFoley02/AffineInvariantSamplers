@@ -254,7 +254,7 @@ def benchmark_corner(results: dict, outdir: str, thin: int = 20, max: int = 3000
 
             print("Saved", outfile)
 
-def rosenbrock_axis_limits(a=1.0, sigma=0.7, b=100.0, nsig=5.0):
+def rosenbrock_axis_limits(a=1.0, sigma=1.5, b=100.0, nsig=5.0):
     """
     Returns consistent axis limits for Rosenbrock plots.
     """
@@ -270,7 +270,7 @@ def rosenbrock_axis_limits(a=1.0, sigma=0.7, b=100.0, nsig=5.0):
     return (xmin, xmax), (ymin, ymax)
 
 
-def rosenbrock_2d_pdf(X, Y, sigma=0.7, a=1.0, b=100.0):
+def rosenbrock_2d_pdf(X, Y, sigma=1.5, a=1.0, b=100.0):
     """
     Exact normalized 2D Rosenbrock pair density:
         p(x, y) = N(x; a, sigma^2) * N(y; x^2, sigma^2 / b)
@@ -280,7 +280,7 @@ def rosenbrock_2d_pdf(X, Y, sigma=0.7, a=1.0, b=100.0):
     return prefac * np.exp(expo)
 
 
-def rosenbrock_x_marginal(xgrid, sigma=0.7, a=1.0):
+def rosenbrock_x_marginal(xgrid, sigma=1.5, a=1.0):
     """
     Exact marginal for the first coordinate of a Rosenbrock pair.
     x ~ N(a, sigma^2)
@@ -288,7 +288,7 @@ def rosenbrock_x_marginal(xgrid, sigma=0.7, a=1.0):
     return norm.pdf(xgrid, loc=a, scale=sigma)
 
 
-def rosenbrock_y_marginal(ygrid, sigma=0.7, a=1.0, b=100.0, nx=4000, x_pad_sigma=6.0):
+def rosenbrock_y_marginal(ygrid, sigma=1.5, a=1.0, b=100.0, nx=4000, x_pad_sigma=6.0):
     """
     Computes the second-coordinate marginal
 
@@ -320,7 +320,7 @@ def rosenbrock_y_marginal(ygrid, sigma=0.7, a=1.0, b=100.0, nx=4000, x_pad_sigma
 
     return py
 
-def overlay_helper_rosenbrock(fig, dim_samples, dims, sigma=0.7, a=1.0, b=100.0,
+def overlay_helper_rosenbrock(fig, dim_samples, dims, sigma=1.5, a=1.0, b=100.0,
                               color='crimson', ngrid=400):
     """
     Draw analytic Rosenbrock overlays in the Rosenbrock rest frame.
@@ -563,7 +563,6 @@ def transform_helper(points: np.ndarray, transform:dict | None = None):
     pts2 = points.reshape(-1, orig_shape[-1])
     out = (pts2 - B) @ Ainv.T
     return out.reshape(orig_shape)
-
 
 
 

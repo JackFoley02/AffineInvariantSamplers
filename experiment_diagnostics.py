@@ -110,7 +110,7 @@ def sample_health_diagnostics(samples, transform):
     }
 
 
-def rosenbrock_moment_errors(samples, transform, a=1.0, b=100.0, sigma=0.7):
+def rosenbrock_moment_errors(samples, transform, a=1.0, b=100.0, sigma=1.5):
     """Rest-frame mean/covariance errors for the paired Rosenbrock target."""
     rest = to_rest_frame(_diagnostic_subsample(samples), transform)
     flat = rest.reshape(-1, rest.shape[-1])
