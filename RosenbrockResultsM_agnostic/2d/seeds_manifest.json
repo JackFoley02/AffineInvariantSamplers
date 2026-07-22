@@ -8,9 +8,11 @@
       "affine": false,
       "initialization_mode": "agnostic",
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
-      "n_chains": 16
+      "n_chains": 150,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true
     },
     {
       "seed": 1,
@@ -20,9 +22,11 @@
       "affine": false,
       "initialization_mode": "agnostic",
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
-      "n_chains": 16
+      "n_chains": 150,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true
     },
     {
       "seed": 2,
@@ -32,9 +36,11 @@
       "affine": false,
       "initialization_mode": "agnostic",
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
-      "n_chains": 16
+      "n_chains": 150,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true
     },
     {
       "seed": 3,
@@ -44,9 +50,11 @@
       "affine": false,
       "initialization_mode": "agnostic",
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
-      "n_chains": 16
+      "n_chains": 150,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true
     },
     {
       "seed": 4,
@@ -56,9 +64,11 @@
       "affine": false,
       "initialization_mode": "agnostic",
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
-      "n_chains": 16
+      "n_chains": 150,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true
     }
   ]
 }

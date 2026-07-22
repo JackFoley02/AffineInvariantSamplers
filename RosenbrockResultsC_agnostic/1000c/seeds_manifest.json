@@ -7,9 +7,11 @@
       "condition_number": 1000.0,
       "affine": true,
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
       "n_chains": 100,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true,
       "initialization_mode": "agnostic"
     },
     {
@@ -19,9 +21,11 @@
       "condition_number": 1000.0,
       "affine": true,
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
       "n_chains": 100,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true,
       "initialization_mode": "agnostic"
     },
     {
@@ -31,9 +35,11 @@
       "condition_number": 1000.0,
       "affine": true,
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
       "n_chains": 100,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true,
       "initialization_mode": "agnostic"
     },
     {
@@ -43,9 +49,11 @@
       "condition_number": 1000.0,
       "affine": true,
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
       "n_chains": 100,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true,
       "initialization_mode": "agnostic"
     },
     {
@@ -55,9 +63,11 @@
       "condition_number": 1000.0,
       "affine": true,
       "n_samples": 10000,
-      "burn_in": 1000,
+      "burn_in": 2000,
       "n_thin": 1,
       "n_chains": 100,
+      "hwm_walkers": 300,
+      "jax_enable_x64": true,
       "initialization_mode": "agnostic"
     }
   ]

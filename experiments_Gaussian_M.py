@@ -7,7 +7,6 @@ import os
 os.environ.setdefault("JAX_ENABLE_X64", "True")
 import argparse
 import json
-import traceback
 from samplers.sampler_nuts import hmc_nuts
 from samplers.samplers import stretch_move
 from samplers.sampler_chees import hmc_chees
@@ -15,7 +14,7 @@ from samplers.sampler_peachees import hamiltonian_walk_chees
 from plotTools.benchmark_autocorrelation import benchmark_autocorrelation
 from plotTools.benchmark_corner import benchmark_corner
 from plotTools.benchmark_trends import benchmark_trends
-from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
+from autocorrelation_func import autocorrelation_fft
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     sample_health_diagnostics, update_seed_manifest)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
