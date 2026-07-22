@@ -18,55 +18,57 @@ def to_rest_frame(samples, transform):
 
 
 def worst_coordinate_ess(samples, transform):
-    """Conservative ESS: sum chain ESS, then take the worst rest-frame coordinate.
+    """Mean ESS across walkers, then across rest-frame coordinates.
 
-    A chain with an invalid IAT (most commonly a constant/frozen chain, or a
-    chain too short for the conservative window) contributes zero ESS. This
-    penalizes failures without turning an otherwise usable run into NaN. The
-    returned validity fractions remain available as a quality warning.
+    ESS is computed independently for every walker-coordinate trajectory.
+    For each coordinate, walker ESS values are averaged; the scalar ESS
+    returned to callers is then the arithmetic mean across coordinates.  A
+    walker with an invalid IAT (most commonly because its trajectory is
+    constant or too short for the conservative window) contributes zero ESS,
+    preserving a penalty for failed diagnostics without making an otherwise
+    usable run NaN.
+
+    The function name is retained for compatibility with existing experiment
+    scripts; its aggregation is no longer a worst-coordinate calculation.
     """
     rest = to_rest_frame(samples, transform)
     ess_by_coordinate = []
     tau_by_coordinate = []
     valid_fraction_by_coordinate = []
     for k in range(rest.shape[-1]):
-        chain_ess = []
-        chain_tau = []
-        for chain in rest:
-            tau, _, ess = integrated_autocorr_time(chain[:, k])
+        walker_ess = []
+        n_valid = 0
+        for walker in rest:
+            tau, _, ess = integrated_autocorr_time(walker[:, k])
             if np.isfinite(tau) and tau > 0.0 and np.isfinite(ess) and ess > 0.0:
                 # Finite-chain negative correlations can produce tau < 1 and
-                # ESS > number of draws. Cap these noisy estimates so the
-                # efficiency plot cannot claim more independent draws than
-                # were actually retained.
+                # ESS above the number of retained draws. Cap these estimates.
                 tau = max(float(tau), 1.0)
-                chain_tau.append(tau)
-                # Recompute ESS from the validated/capped tau. Never reuse a
-                # potentially negative or inconsistent value returned by the
-                # lower-level window estimator.
-                chain_ess.append(float(chain.shape[0]) / tau)
-        valid_fraction = len(chain_tau) / rest.shape[0]
-        valid_fraction_by_coordinate.append(valid_fraction)
-        total_ess = float(np.sum(chain_ess))
-        if total_ess <= 0.0:
-            ess_by_coordinate.append(0.0)
-            tau_by_coordinate.append(np.nan)
-        else:
-            ess_by_coordinate.append(total_ess)
-            # Equivalent ensemble-wide IAT. Invalid chains have contributed
-            # zero ESS, so they increase this tau rather than disappearing
-            # from a median over only the successful chains.
-            nominal_draws = rest.shape[0] * rest.shape[1]
-            tau_by_coordinate.append(nominal_draws / total_ess)
+                walker_ess.append(float(walker.shape[0]) / tau)
+                n_valid += 1
+            else:
+                walker_ess.append(0.0)
 
-    finite = np.isfinite(ess_by_coordinate)
-    if not np.any(finite):
+        coordinate_ess = float(np.mean(walker_ess))
+        ess_by_coordinate.append(coordinate_ess)
+        valid_fraction_by_coordinate.append(n_valid / rest.shape[0])
+        tau_by_coordinate.append(
+            float(rest.shape[1] / coordinate_ess)
+            if coordinate_ess > 0.0 else np.nan
+        )
+
+    ess_by_coordinate = np.asarray(ess_by_coordinate)
+    tau_by_coordinate = np.asarray(tau_by_coordinate)
+    valid_fraction_by_coordinate = np.asarray(valid_fraction_by_coordinate)
+    if not np.any(valid_fraction_by_coordinate):
         return (np.nan, np.nan, np.asarray(ess_by_coordinate),
                 np.asarray(tau_by_coordinate), np.asarray(valid_fraction_by_coordinate))
-    worst = int(np.nanargmin(ess_by_coordinate))
-    return (float(ess_by_coordinate[worst]), float(tau_by_coordinate[worst]),
-            np.asarray(ess_by_coordinate), np.asarray(tau_by_coordinate),
-            np.asarray(valid_fraction_by_coordinate))
+    mean_ess = float(np.mean(ess_by_coordinate))
+    # Report the IAT corresponding to the scalar mean ESS so that the two
+    # aggregate values retain the identity ESS = retained_draws / IAT.
+    mean_tau = float(rest.shape[1] / mean_ess) if mean_ess > 0.0 else np.nan
+    return (mean_ess, mean_tau, ess_by_coordinate, tau_by_coordinate,
+            valid_fraction_by_coordinate)
 
 
 def evaluation_count(name, n_chains, n_saved, n_thin, n_leapfrog):
