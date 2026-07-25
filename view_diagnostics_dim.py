@@ -29,10 +29,25 @@ for idx, d in enumerate(DIMS):
         with open(file, 'r') as f:
             data = json.load(f)
             print(f"Loaded {file}")
-            dim_results_NUTS.append(data['summary']['Dense-mass NUTS']['ess_per_eval'])
-            dim_results_HWM.append(data['summary']['Hamiltonian Walk Move']['ess_per_eval'])
-            dim_results_SM.append(data['summary']['Stretch Move']['ess_per_eval'])
-            dim_results_HMC.append(data['summary']['HMC']['ess_per_eval'])
+            ESS_walker_avg_NUTS = np.array(data['summary']['Dense-mass NUTS']['ess_by_coordinate']) 
+            ESS_walker_avg_HWM = np.array(data['summary']['Hamiltonian Walk Move']['ess_by_coordinate']) 
+            ESS_walker_avg_SM = np.array(data['summary']['Stretch Move']['ess_by_coordinate']) 
+            ESS_walker_avg_HMC = np.array(data['summary']['HMC']['ess_by_coordinate']) 
+
+            ESS_avg_NUTS = np.nanmean(ESS_walker_avg_NUTS)
+            ESS_avg_HWM = np.nanmean(ESS_walker_avg_HWM)
+            ESS_avg_SM = np.nanmean(ESS_walker_avg_SM)
+            ESS_avg_HMC = np.nanmean(ESS_walker_avg_HMC)
+
+            ESSpE_NUTS = ESS_avg_NUTS / data['summary']['Dense-mass NUTS']['n_evaluations']
+            ESSpE_HWM = ESS_avg_HWM / data['summary']['Hamiltonian Walk Move']['n_evaluations']
+            ESSpE_SM = ESS_avg_SM / data['summary']['Stretch Move']['n_evaluations']
+            ESSpE_HMC = ESS_avg_HMC / data['summary']['HMC']['n_evaluations']
+
+            dim_results_NUTS.append(ESSpE_NUTS)
+            dim_results_HWM.append(ESSpE_HWM)
+            dim_results_SM.append(ESSpE_SM)
+            dim_results_HMC.append(ESSpE_HMC)
 
     ESS_med[0, idx] = np.nanmedian(dim_results_NUTS)
     ESS_top[0, idx] = np.nanmax(dim_results_NUTS)
@@ -83,10 +98,25 @@ for idx, d in enumerate(DIMS):
         with open(file, 'r') as f:
             data = json.load(f)
             print(f"Loaded {file}")
-            dim_results_NUTS.append(data['summary']['Dense-mass NUTS']['ess_per_eval'])
-            dim_results_HWM.append(data['summary']['Hamiltonian Walk Move']['ess_per_eval'])
-            dim_results_SM.append(data['summary']['Stretch Move']['ess_per_eval'])
-            dim_results_HMC.append(data['summary']['HMC']['ess_per_eval'])
+            ESS_walker_avg_NUTS = np.array(data['summary']['Dense-mass NUTS']['ess_by_coordinate']) 
+            ESS_walker_avg_HWM = np.array(data['summary']['Hamiltonian Walk Move']['ess_by_coordinate']) 
+            ESS_walker_avg_SM = np.array(data['summary']['Stretch Move']['ess_by_coordinate']) 
+            ESS_walker_avg_HMC = np.array(data['summary']['HMC']['ess_by_coordinate']) 
+
+            ESS_avg_NUTS = np.nanmean(ESS_walker_avg_NUTS)
+            ESS_avg_HWM = np.nanmean(ESS_walker_avg_HWM)
+            ESS_avg_SM = np.nanmean(ESS_walker_avg_SM)
+            ESS_avg_HMC = np.nanmean(ESS_walker_avg_HMC)
+
+            ESSpE_NUTS = ESS_avg_NUTS / data['summary']['Dense-mass NUTS']['n_evaluations']
+            ESSpE_HWM = ESS_avg_HWM / data['summary']['Hamiltonian Walk Move']['n_evaluations']
+            ESSpE_SM = ESS_avg_SM / data['summary']['Stretch Move']['n_evaluations']
+            ESSpE_HMC = ESS_avg_HMC / data['summary']['HMC']['n_evaluations']
+
+            dim_results_NUTS.append(ESSpE_NUTS)
+            dim_results_HWM.append(ESSpE_HWM)
+            dim_results_SM.append(ESSpE_SM)
+            dim_results_HMC.append(ESSpE_HMC)
 
     ESS_med[0, idx] = np.nanmedian(dim_results_NUTS)
     ESS_top[0, idx] = np.nanmax(dim_results_NUTS)

@@ -16,6 +16,7 @@ from plotTools.benchmark_corner import benchmark_corner
 from plotTools.benchmark_trends import benchmark_trends
 from autocorrelation_func import autocorrelation_fft
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
+                                    mean_walker_efficiency,
                                     sample_health_diagnostics, update_seed_manifest)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -273,7 +274,9 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
 
         elapsed = time.time() - start_time
         n_evaluations, evaluation_type = evaluation_count(name, len(acceptance_rates), n_samples, n_thin, n_leapfrog)
-        ess_per_eval = ess / n_evaluations if np.isfinite(ess) and np.isfinite(n_evaluations) else np.nan
+        ess_per_eval, evaluations_per_walker = mean_walker_efficiency(
+            ess, n_evaluations, len(acceptance_rates)
+        )
         health = sample_health_diagnostics(post_burn_in_samples, transform_now)
         
         # Store results
@@ -294,6 +297,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             "ess_by_coordinate": ess_by_coordinate,
             "ess_valid_fraction": ess_valid_fraction,
             "n_evaluations": n_evaluations,
+            "evaluations_per_walker": evaluations_per_walker,
             "evaluation_type": evaluation_type,
             "ess_per_eval": ess_per_eval,
             "time": elapsed,
@@ -397,6 +401,7 @@ def save_light_results(results, transform, outdir, dim, af):
             "ess_by_coordinate": np.asarray(r["ess_by_coordinate"]).tolist(),
             "ess_valid_fraction": np.asarray(r["ess_valid_fraction"]).tolist(),
             "n_evaluations": float(r["n_evaluations"]),
+            "evaluations_per_walker": float(r["evaluations_per_walker"]),
             "evaluation_type": r["evaluation_type"],
             "ess_per_eval": float(r["ess_per_eval"]),
             "time": float(r["time"]),

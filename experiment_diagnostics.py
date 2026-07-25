@@ -72,7 +72,12 @@ def worst_coordinate_ess(samples, transform):
 
 
 def evaluation_count(name, n_chains, n_saved, n_thin, n_leapfrog):
-    """Post-warmup evaluation count; warmup is deliberately excluded from both numerator and denominator."""
+    """Total post-warmup evaluations across the complete ensemble.
+
+    This is an ensemble-total cost.  Use :func:`mean_walker_efficiency` when
+    pairing it with the mean-per-walker ESS returned by
+    :func:`worst_coordinate_ess`.
+    """
     transitions = int(n_saved) * int(n_thin)
     if name == "Stretch Move":
         return n_chains * transitions, "function"
@@ -82,6 +87,32 @@ def evaluation_count(name, n_chains, n_saved, n_thin, n_leapfrog):
     # an initial gradient plus one gradient after each position update.
     per_transition = float(n_leapfrog) if name == "Dense-mass NUTS" else float(n_leapfrog) + 1.0
     return n_chains * transitions * per_transition, "gradient"
+
+
+def mean_walker_efficiency(mean_walker_ess, total_evaluations, n_walkers):
+    """Return ESS/evaluation on a consistent per-walker basis.
+
+    ``mean_walker_ess`` is averaged over walkers, whereas
+    ``total_evaluations`` is summed over walkers.  Dividing the latter by the
+    actual walker count puts numerator and denominator on the same scale.
+
+    Returns
+    -------
+    ess_per_eval : float
+        Mean-walker ESS divided by evaluations per walker.
+    evaluations_per_walker : float
+        The total ensemble evaluation count divided by ``n_walkers``.
+    """
+    if (not np.isfinite(mean_walker_ess)
+            or not np.isfinite(total_evaluations)
+            or not np.isfinite(n_walkers)
+            or int(n_walkers) <= 0):
+        return np.nan, np.nan
+
+    evaluations_per_walker = float(total_evaluations) / int(n_walkers)
+    if evaluations_per_walker <= 0.0:
+        return np.nan, evaluations_per_walker
+    return float(mean_walker_ess) / evaluations_per_walker, evaluations_per_walker
 
 
 def _diagnostic_subsample(samples, max_draws_per_chain=200):
