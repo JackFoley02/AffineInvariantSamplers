@@ -26,6 +26,8 @@ from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
 N_CHAINS = 150
 ROSENBROCK_SIGMA = 1.5
 INITIALIZATION_CHOICES = ("oracle", "agnostic")
+Experiment = 'Warmup'
+print(f'<!!!> WARNING <!!!> -- You are currently running the {Experiment} experiment. Please ensure the directory structure is correct')
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -73,6 +75,7 @@ af = args.af
 gpu = args.gpu
 cond = args.cond
 seed = args.seed
+n_warmup = args.n_warmup
 INITIALIZATION_MODE = args.initialization
 
 if gpu is not None:
@@ -288,11 +291,14 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             log_density_jax, initial_hwm, total_samples,
             n_walkers=hwm_walkers, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
         ),        
-        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=n_chains, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
+
+    }
+    """
+       "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=n_chains, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
         "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed),
  
     }
-
+    """
     
     # Benchmark each sampler with careful error handling
     for name, sampler_func in samplers.items():
@@ -519,7 +525,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=1.5, transform = 
 
     fig.suptitle("Sampler projections onto first two Rosenbrock dimensions", y=0.995)
     fig.tight_layout()
-    output_dir = output_dir or f"RosenbrockResultsC/{cond}c"
+    output_dir = output_dir or f"RosenbrockResultsW/{n_warmup}W"
     fig.savefig(os.path.join(output_dir, "Rosenbrock_overlay_first2.png"), dpi=220, bbox_inches="tight")
     plt.close()
     colors = ['black', 'black', 'purple', 'blue', 'green', 'y', 'orange', 'red']
@@ -564,11 +570,11 @@ else:
 
 # Keep agnostic runs separate so they cannot overwrite oracle condition runs.
 results_root = (
-    "RosenbrockResultsC_agnostic"
+    "RosenbrockResultsW_agnostic"
     if INITIALIZATION_MODE == "agnostic"
-    else "RosenbrockResultsC"
+    else "RosenbrockResultsW"
 )
-cond_string = f"{cond:g}c"
+cond_string = f"{n_warmup:g}W"
 base_outdir = f"{results_root}/{cond_string}"
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = os.path.join(outdir, "corner")
@@ -688,13 +694,13 @@ if not args.no_plots:
         transform=transform, output_dir=outdir
     )
     benchmark_corner(results, corner_dir, thin = 10,  overlay_rosenbrock=overlay_rosenbrock, transform=transform)
-    benchmark_trends(results, trends_dir, 'RosenbrockC')
-    benchmark_autocorrelation(results, outdir, 'RosenbrockC')
+    benchmark_trends(results, trends_dir, 'RosenbrockW')
+    benchmark_autocorrelation(results, outdir, 'RosenbrockW')
 
 if not args.no_report:
     from generate_report import SamplerReport
 
-    report = SamplerReport(results=results, label = 'RosenbrockC', transform=transform, overlay=overlay_rosenbrock)
+    report = SamplerReport(results=results, label = 'RosenbrockW', transform=transform, overlay=overlay_rosenbrock)
     report.compile_pdf(texname = os.path.join(outdir, f'RosenbrockC_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
 
 print("Rosenbrock distribution benchmark complete. Check the output directory for plots.")
