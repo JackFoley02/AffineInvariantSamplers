@@ -18,19 +18,19 @@ def autocorrelation_fft(x, max_lag=None):
     acf : array
         Autocorrelation function values
     """
-    x = np.asarray(x, dtype=float)
+    x = np.asarray(x, dtype=float) #Convert samples into something readable
     n = len(x)
-    if max_lag is None:
+    if max_lag is None: #select the total lag count
         max_lag = min(n // 3, 20000)  # Cap at 20000 to prevent slow computation
 
     if n == 0 or max_lag <= 0:
         return np.array([], dtype=float)
     
-    # Remove mean and normalize
+    # Remove mean and normalize / center the samples
     x_norm = x - np.mean(x)
     var = np.var(x_norm)
 
-    if (not np.isfinite(var)) or var <= 0.0:
+    if (not np.isfinite(var)) or var <= 0.0: #check variance 
         acf = np.full(min(max_lag, n), np.nan, dtype=float)
         if len(acf) > 0:
             acf[0] = 1.0

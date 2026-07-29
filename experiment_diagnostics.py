@@ -80,7 +80,7 @@ def evaluation_count(name, n_chains, n_saved, n_thin, n_leapfrog):
     """
     transitions = int(n_saved) * int(n_thin)
     if name == "Stretch Move":
-        return n_chains * transitions, "function"
+        return n_chains * transitions, "standard"
     if n_leapfrog is None or not np.isfinite(n_leapfrog):
         return np.nan, "gradient"
     # NUTS reports mean actual leapfrog steps. Fixed-length methods require

@@ -20,6 +20,7 @@ from samplers.sampler_chees import hmc_chees
 from samplers.samplers import stretch_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
+                                    mean_walker_efficiency,
                                     sample_health_diagnostics,
                                     rosenbrock_moment_errors, update_seed_manifest)
 
@@ -355,7 +356,9 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         n_evaluations, evaluation_type = evaluation_count(
             name, len(acceptance_rates), n_samples, n_thin, n_leapfrog
         )
-        ess_per_eval = ess / n_evaluations if np.isfinite(ess) and np.isfinite(n_evaluations) else np.nan
+        ess_per_eval, evaluations_per_walker = mean_walker_efficiency(
+            ess, n_evaluations, len(acceptance_rates)
+        )
         transform_now = {"affine": affine, "A": A, "B": B}
         health = sample_health_diagnostics(series, transform_now)
         moment_errors = rosenbrock_moment_errors(
@@ -378,6 +381,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             "ess_by_coordinate": ess_by_coordinate,
             "ess_valid_fraction": ess_valid_fraction,
             "n_evaluations": n_evaluations,
+            "evaluations_per_walker": evaluations_per_walker,
             "evaluation_type": evaluation_type,
             "ess_per_eval": ess_per_eval,
             "time": elapsed,
@@ -607,6 +611,7 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
             "ess_by_coordinate": np.asarray(r["ess_by_coordinate"]).tolist(),
             "ess_valid_fraction": np.asarray(r["ess_valid_fraction"]).tolist(),
             "n_evaluations": float(r["n_evaluations"]),
+            "evaluations_per_walker": float(r["evaluations_per_walker"]),
             "evaluation_type": r["evaluation_type"],
             "ess_per_eval": float(r["ess_per_eval"]),
             "time": float(r["time"]),
@@ -634,6 +639,7 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
     metadata = {
         "dim": dim,
         "seed": seed,
+        "condition_number": cond,
         "n_samples": args.n_samples,
         "burn_in": args.burn_in,
         "n_warmup": args.n_warmup,

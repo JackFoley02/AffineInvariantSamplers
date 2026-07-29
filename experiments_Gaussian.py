@@ -446,6 +446,7 @@ def save_light_results(results, transform, outdir, dim, af, cond):
         "hwm_walkers_requested": args.hwm_walkers,
         "jax_enable_x64": bool(jax.config.jax_enable_x64),
         "cond": cond,
+        "condition_number": cond,
         "af": af,
         "transform_affine": bool(transform["affine"]),
         "summary": summary,
