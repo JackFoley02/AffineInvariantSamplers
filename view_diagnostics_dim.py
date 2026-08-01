@@ -6,16 +6,16 @@ from datetime import datetime, timezone
 
 
 #some constants
-DIMS = [2, 4, 8, 16, 32, 64, 128]
+DIMS = [2, 4, 8, 16]
 SEEDS = ['00000', '00001', '00002', '00003', '00004']
 DISTRIBUTION = 'Rosenbrock'
 agnosticism = '_agnostic'
 
 #initializing empty arrays for storage
 
-ESS_med = np.empty((4, 7))
-ESS_top = np.empty((4, 7))
-ESS_bot = np.empty((4, 7))
+ESS_med = np.empty((4, 4))
+ESS_top = np.empty((4, 4))
+ESS_bot = np.empty((4, 4))
 
 #main loop
 for idx, d in enumerate(DIMS):
@@ -67,14 +67,15 @@ np.savez(f'{DISTRIBUTION}_dimension_zipped_results.npz', **arrays)
 print('Saving Complete! Please transfer the arrays to your machine.')
 
 
+
 DISTRIBUTION = 'Gaussian'
 agnosticism = ''
 
 #initializing empty arrays for storage
 
-ESS_med = np.empty((4, 7))
-ESS_top = np.empty((4, 7))
-ESS_bot = np.empty((4, 7))
+ESS_med = np.empty((4, 4))
+ESS_top = np.empty((4, 4))
+ESS_bot = np.empty((4, 4))
 
 #main loop
 for idx, d in enumerate(DIMS):

@@ -19,7 +19,7 @@ from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     mean_walker_efficiency,
                                     sample_health_diagnostics, update_seed_manifest)
-
+from save_series_hdf5 import save_series_hdf5
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 N_CHAINS = 100
@@ -393,8 +393,6 @@ def save_light_results(results, transform, outdir, dim, af, cond):
     for name, r in results.items():
         key = name.replace(" ", "_")
 
-        series = np.asarray(r["series"])
-        arrays[f"{key}_series_thin10"] = series[:, ::10, :].astype(np.float32)
 
         arrays[f"{key}_acceptance_rates"] = np.asarray(r["acceptance_rates"], dtype=np.float32)
         arrays[f"{key}_mean"] = np.asarray(r["mean"], dtype=np.float32)
@@ -402,8 +400,13 @@ def save_light_results(results, transform, outdir, dim, af, cond):
         arrays[f"{key}_autocorrelation"] = np.asarray(r["autocorrelation"], dtype=np.float32)
         arrays[f"{key}_epsilon_history"] = np.asarray(r["epsilon_history"], dtype=np.float32)
 
+        parameter_mean = np.asarray(r["mean"], dtype=float)
+        parameter_variance = np.diag(np.asarray(r["cov"], dtype=float))
         summary[name] = {
             "distribution": r["distribution"],
+            "parameter_frame": "intrinsic",
+            "parameter_mean": parameter_mean.tolist(),
+            "parameter_variance": parameter_variance.tolist(),
             "tau": float(r["tau"]),
             "tau_std": float(r["tau_std"]),
             "ess": float(r["ess"]),
@@ -436,12 +439,22 @@ def save_light_results(results, transform, outdir, dim, af, cond):
             "sample_covariance_full_rank": r["sample_covariance_full_rank"],
         }
 
+    series_storage_thinning = 1
+    series_path = save_series_hdf5(
+        results, outdir, thin=series_storage_thinning
+    )
+
     metadata = {
         "dim": dim,
         "seed": seed,
         "n_samples": args.n_samples,
         "burn_in": args.burn_in,
         "n_thin": args.n_thin,
+        "series_file": series_path.name,
+        "series_storage": "hdf5",
+        "series_storage_thinning": series_storage_thinning,
+        "series_storage_dtype": "float32",
+        "series_axis_order": ["walker", "draw", "coordinate"],
         "n_chains": args.n_chains,
         "hwm_walkers_requested": args.hwm_walkers,
         "jax_enable_x64": bool(jax.config.jax_enable_x64),
