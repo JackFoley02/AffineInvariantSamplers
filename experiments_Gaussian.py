@@ -210,9 +210,9 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
         ),
         "Stretch Move": lambda: stretch_move(
             log_density,
-            initial,
+            initial_hwm,
             total_samples,
-            n_walkers=n_chains,
+            n_walkers=hwm_walkers,
             a=1.0 + 2.151 / np.sqrt(dim),
             n_thin=n_thin,
         ),

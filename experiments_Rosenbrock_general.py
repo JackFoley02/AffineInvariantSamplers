@@ -289,7 +289,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             log_density_jax, initial_hwm, total_samples,
             n_walkers=hwm_walkers, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed
         ),        
-        "Stretch Move": lambda: stretch_move(log_density, initial, total_samples, n_walkers=n_chains, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
+        "Stretch Move": lambda: stretch_move(log_density, initial_hwm, total_samples, n_walkers=hwm_walkers, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
         "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed),
  
     }
