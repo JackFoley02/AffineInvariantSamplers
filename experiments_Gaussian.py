@@ -63,6 +63,11 @@ def parse_args():
               "'dimension' uses --dim; 'condition' uses --cond "
               "(default: %(default)s)."),
     )
+    parser.add_argument(
+        "--warmup-sweep",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -229,28 +234,31 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             n_thin=n_thin,
             seed=seed,
         ),
-        "Stretch Move": lambda: stretch_move(
-            log_density,
-            initial_hwm,
-            total_samples,
-            n_walkers=hwm_walkers,
-            a=1.0 + 2.151 / np.sqrt(dim),
-            n_thin=n_thin,
-        ),
-        "HMC": lambda: hmc_chees(
-            log_density_jax,
-            initial,
-            total_samples,
-            epsilon=0.1,
-            L=10,
-            n_chains=n_chains,
-            n_warmup=n_warmup,
-            target_accept=args.target_accept,
-            max_L=1000,
-            n_thin=n_thin,
-            seed=seed,
-        ),
     }
+    if not args.warmup_sweep:
+        samplers.update({
+            "Stretch Move": lambda: stretch_move(
+                log_density,
+                initial_hwm,
+                total_samples,
+                n_walkers=hwm_walkers,
+                a=1.0 + 2.151 / np.sqrt(dim),
+                n_thin=n_thin,
+            ),
+            "HMC": lambda: hmc_chees(
+                log_density_jax,
+                initial,
+                total_samples,
+                epsilon=0.1,
+                L=10,
+                n_chains=n_chains,
+                n_warmup=n_warmup,
+                target_accept=args.target_accept,
+                max_L=1000,
+                n_thin=n_thin,
+                seed=seed,
+            ),
+        })
 
     for name, sampler_func in samplers.items():
         np.random.seed(seed)
@@ -367,9 +375,14 @@ if transform["affine"]:
 else:
     afstring = ""
 
-base_outdir = sweep_output_base(
-    args.output_dir, args.sweep_parameter, d, cond, affine=af
-)
+if args.warmup_sweep:
+    base_outdir = os.path.join(
+        args.output_dir, f"{cond:g}c", f"{args.n_warmup}w"
+    )
+else:
+    base_outdir = sweep_output_base(
+        args.output_dir, args.sweep_parameter, d, cond, affine=af
+    )
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = f"{outdir}/corner"
 trends_dir = f"{outdir}/trends"
@@ -471,6 +484,7 @@ def save_light_results(results, transform, outdir, dim, af, cond):
         "seed": seed,
         "n_samples": args.n_samples,
         "burn_in": args.burn_in,
+        "n_warmup": args.n_warmup,
         "n_thin": args.n_thin,
         "series_file": series_path.name,
         "series_storage": "hdf5",
@@ -511,6 +525,7 @@ update_seed_manifest(
      "sweep_parameter": args.sweep_parameter,
      "sweep_value": d if args.sweep_parameter == "dimension" else cond,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
+     "n_warmup": args.n_warmup,
      "n_thin": args.n_thin, "n_chains": args.n_chains,
      "hwm_walkers": args.hwm_walkers, "jax_enable_x64": True},
 )
