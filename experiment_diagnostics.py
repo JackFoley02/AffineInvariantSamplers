@@ -8,6 +8,32 @@ import numpy as np
 from autocorrelation_func import integrated_autocorr_time
 
 
+SWEEP_PARAMETERS = ("dimension", "condition")
+
+
+def sweep_output_base(output_dir, sweep_parameter, dim, condition_number,
+                      affine=False):
+    """Return the result directory for one point in a benchmark sweep.
+
+    Dimension sweeps use ``<output_dir>/<dim>d`` (or ``<dim>d_af`` for an
+    affine run), while condition sweeps use ``<output_dir>/<condition>c``.
+    These layouts match the directories consumed by ``benchmark_table.py``
+    and the plotting loaders.
+    """
+    output_root = Path(output_dir).expanduser()
+    if sweep_parameter == "dimension":
+        suffix = "_af" if affine else ""
+        sweep_dir = f"{int(dim)}d{suffix}"
+    elif sweep_parameter == "condition":
+        sweep_dir = f"{float(condition_number):g}c"
+    else:
+        choices = ", ".join(SWEEP_PARAMETERS)
+        raise ValueError(
+            f"sweep_parameter must be one of: {choices}; got {sweep_parameter!r}"
+        )
+    return output_root / sweep_dir
+
+
 def to_rest_frame(samples, transform):
     samples = np.asarray(samples)
     if not transform.get("affine", False):

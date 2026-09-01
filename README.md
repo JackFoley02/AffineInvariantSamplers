@@ -39,6 +39,32 @@ The reports also include the following figures:
 - Autocorrelation comparsion across samplers
 - Step Size tuning results.
 
+## Experiment output layout
+
+The four primary Gaussian and Rosenbrock experiment scripts accept a custom
+result root and the parameter used to structure a sweep:
+
+```bash
+python experiments_Gaussian.py \
+    --output-dir GaussianResultsW \
+    --sweep-parameter condition \
+    --cond 100 \
+    --seed 0
+
+python experiments_Rosenbrock_M.py \
+    --output-dir RosenbrockResultsM \
+    --sweep-parameter dimension \
+    --dim 32 \
+    --seed 0
+```
+
+`--sweep-parameter dimension` uses the existing `--dim` value and writes to
+`<output-dir>/<dim>d/seeds/seed_<seed>` (with `_af` after `d` for affine
+dimension runs). `--sweep-parameter condition` uses `--cond` and writes to
+`<output-dir>/<condition>c/seeds/seed_<seed>`. The shorter `--sweep` alias is
+equivalent to `--sweep-parameter`. Missing directories are created
+automatically.
+
 ## Cross-run LaTeX tables
 
 `benchmark_table.py` creates a seed-aggregated, standalone LaTeX table directly
@@ -46,11 +72,11 @@ from the lightweight `results_summary.json` files and compiles a same-named PDF
 by default. For a dimension sweep:
 
 ```bash
-python benchmark_table.py RosenbrockResultsM_agnostic \
+python benchmark_table.py RosenbrockResultsM \
     --parameters 2 4 8 16 \
     --parameter-kind dimension \
     --row-order parameter \
-    --output RosenbrockResultsM_agnostic/benchmark_table_2d_4d_8d_16d.tex
+    --output RosenbrockResultsM/benchmark_table_2d_4d_8d_16d.tex
 ```
 
 Use `--row-order sampler` to group all runs for a sampler together. Condition

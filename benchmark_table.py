@@ -610,6 +610,16 @@ def _format_number(value: Any, style: str = "general") -> str:
     if style == "scientific":
         return f"{number:.3e}"
     if style == "runtime":
+        if abs(number) >= 1e4:
+            return f"{number:.0f}"
+        return f"{number:.3f}"
+    if style == "compact":
+        if number != 0.0 and (abs(number) < 1e-3 or abs(number) >= 1e6):
+            return (
+                f"{number:.2e}"
+                .replace("e-0", "e-")
+                .replace("e+0", "e+")
+            )
         return f"{number:.3f}"
     if abs(number - round(number)) < 1e-12 and abs(number) < 1e6:
         return f"{number:.0f}"
@@ -649,7 +659,7 @@ def _row_cells(row: TableRow) -> list[str]:
         _tex_escape(row.evaluation_type) if row.evaluation_type else "--",
         _format_number(row.ess_per_eval, "scientific"),
         _format_number(row.runtime, "runtime"),
-        _format_number(row.ess_per_second),
+        _format_number(row.ess_per_second, "compact"),
         _format_number(row.mean_x1),
         _format_number(row.variance_x1),
         _format_number(row.mean_x2),

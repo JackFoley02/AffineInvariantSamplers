@@ -18,7 +18,9 @@ from plotTools.benchmark_trends import benchmark_trends
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     mean_walker_efficiency,
-                                    sample_health_diagnostics, update_seed_manifest)
+                                    sample_health_diagnostics,
+                                    SWEEP_PARAMETERS, sweep_output_base,
+                                    update_seed_manifest)
 from save_series_hdf5 import save_series_hdf5
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -39,11 +41,28 @@ def parse_args():
     parser.add_argument("--n-samples", type=int, default=10000)
     parser.add_argument("--burn-in", type=int, default=1000)
     parser.add_argument("--n-warmup", type=int, default=1000)
+    parser.add_argument(
+        "--target-accept", type=float, default=0.651,
+        help="Target acceptance probability for NUTS, HWM, and HMC (default: %(default)s).",
+    )
     parser.add_argument("--n-chains", type=int, default=N_CHAINS)
     parser.add_argument("--hwm-walkers", type=int, default=300,
                         help="Walker count used only by Hamiltonian Walk Move.")
     parser.add_argument("--n-thin", type=int, default=1,
                         help="Transitions per saved draw; use 1 for reliable ESS estimates.")
+    parser.add_argument(
+        "--output-dir",
+        default="GaussianResultsC",
+        help="Root results directory to create/use (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--sweep-parameter", "--sweep",
+        choices=SWEEP_PARAMETERS,
+        default="condition",
+        help=("Parameter used for the directory directly below --output-dir. "
+              "'dimension' uses --dim; 'condition' uses --cond "
+              "(default: %(default)s)."),
+    )
     return parser.parse_args()
 
 
@@ -191,6 +210,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             epsilon=0.1,
             n_chains=n_chains,
             n_warmup=n_warmup,
+            target_accept=args.target_accept,
             n_thin=n_thin,
             max_tree_depth=8,
             seed=seed,
@@ -204,6 +224,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             epsilon=0.1,
             L=10,
             n_warmup=n_warmup,
+            target_accept=args.target_accept,
             max_L=1000,
             n_thin=n_thin,
             seed=seed,
@@ -224,6 +245,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             L=10,
             n_chains=n_chains,
             n_warmup=n_warmup,
+            target_accept=args.target_accept,
             max_L=1000,
             n_thin=n_thin,
             seed=seed,
@@ -345,9 +367,9 @@ if transform["affine"]:
 else:
     afstring = ""
 
-cond_string = f"{cond:g}c"
-
-base_outdir = f"GaussianResultsC/{cond_string}/{d}d{afstring}"
+base_outdir = sweep_output_base(
+    args.output_dir, args.sweep_parameter, d, cond, affine=af
+)
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = f"{outdir}/corner"
 trends_dir = f"{outdir}/trends"
@@ -460,6 +482,9 @@ def save_light_results(results, transform, outdir, dim, af, cond):
         "jax_enable_x64": bool(jax.config.jax_enable_x64),
         "cond": cond,
         "condition_number": cond,
+        "output_dir": str(args.output_dir),
+        "sweep_parameter": args.sweep_parameter,
+        "sweep_value": d if args.sweep_parameter == "dimension" else cond,
         "af": af,
         "transform_affine": bool(transform["affine"]),
         "summary": summary,
@@ -482,6 +507,9 @@ save_light_results(
 update_seed_manifest(
     base_outdir, seed, outdir,
     {"dim": d, "condition_number": cond, "affine": af,
+     "output_dir": str(args.output_dir),
+     "sweep_parameter": args.sweep_parameter,
+     "sweep_value": d if args.sweep_parameter == "dimension" else cond,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
      "n_thin": args.n_thin, "n_chains": args.n_chains,
      "hwm_walkers": args.hwm_walkers, "jax_enable_x64": True},

@@ -8,3 +8,7 @@ __pycache__/
 test_*
 .ipynb*/
 data*
+/GaussianResultsC/
+/GaussianResultsM/
+/RosenbrockResultsC/
+/RosenbrockResultsM/

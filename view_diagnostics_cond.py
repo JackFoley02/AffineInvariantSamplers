@@ -6,16 +6,17 @@ from datetime import datetime, timezone
 
 
 #some constants
-COND = [1, 3.162, 10, 31.62, 100, 316.2, 1000]
+COND = [1, 3.162, 10, 31.62, 100, 316.2, 1000, 3162, 10000]
 SEEDS = ['00000', '00001', '00002', '00003', '00004']
 DISTRIBUTION = 'Rosenbrock'
+RESULT_ROOT = 'RosenbrockResultsC'
 
 
 #initializing empty arrays for storage
 
-ESS_med = np.empty((4, 7))
-ESS_top = np.empty((4, 7))
-ESS_bot = np.empty((4, 7))
+ESS_med = np.empty((4, 9))
+ESS_top = np.empty((4, 9))
+ESS_bot = np.empty((4, 9))
 
 #main loop
 for idx, c in enumerate(COND):
@@ -25,7 +26,7 @@ for idx, c in enumerate(COND):
     dim_results_SM = []
     dim_results_HMC = []
     for seed in SEEDS:
-        file = f'{DISTRIBUTION}ResultsC_agnostic/{c}c/seeds/seed_{seed}/results_summary.json'
+        file = f'{RESULT_ROOT}/{c}c/seeds/seed_{seed}/results_summary.json'
         with open(file, 'r') as f:
             data = json.load(f)
             print(f"Loaded {file}")
@@ -59,7 +60,7 @@ arrays = {
     'axis_values': np.asarray(COND, dtype=float),
     'method_names': np.asarray(['Dense-mass NUTS', 'Hamiltonian Walk Move', 'Stretch Move', 'HMC']),
     'metadata_json': np.asarray(json.dumps({
-        'distribution': DISTRIBUTION, 'result_root': f'{DISTRIBUTION}ResultsC_agnostic',
+        'distribution': DISTRIBUTION, 'result_root': RESULT_ROOT,
         'seeds': SEEDS, 'aggregation': {'center': 'nanmedian', 'top': 'nanmax', 'bottom': 'nanmin'},
         'created_utc': datetime.now(timezone.utc).isoformat(),
     })),
@@ -69,13 +70,14 @@ print('Saving Complete! Please transfer the arrays to your machine.')
 
 
 DISTRIBUTION = 'Gaussian'
+RESULT_ROOT = 'GaussianResultsC'
 
 
 #initializing empty arrays for storage
 
-ESS_med = np.empty((4, 7))
-ESS_top = np.empty((4, 7))
-ESS_bot = np.empty((4, 7))
+ESS_med = np.empty((4, 9))
+ESS_top = np.empty((4, 9))
+ESS_bot = np.empty((4, 9))
 
 #main loop
 for idx, c in enumerate(COND):
@@ -85,7 +87,7 @@ for idx, c in enumerate(COND):
     dim_results_SM = []
     dim_results_HMC = []
     for seed in SEEDS:
-        file = f'{DISTRIBUTION}ResultsC/{c}c/seeds/seed_{seed}/results_summary.json'
+        file = f'{RESULT_ROOT}/{c}c/seeds/seed_{seed}/results_summary.json'
         with open(file, 'r') as f:
             data = json.load(f)
             print(f"Loaded {file}")
@@ -119,7 +121,7 @@ arrays = {
     'axis_values': np.asarray(COND, dtype=float),
     'method_names': np.asarray(['Dense-mass NUTS', 'Hamiltonian Walk Move', 'Stretch Move', 'HMC']),
     'metadata_json': np.asarray(json.dumps({
-        'distribution': DISTRIBUTION, 'result_root': f'{DISTRIBUTION}ResultsC',
+        'distribution': DISTRIBUTION, 'result_root': RESULT_ROOT,
         'seeds': SEEDS, 'aggregation': {'center': 'nanmedian', 'top': 'nanmax', 'bottom': 'nanmin'},
         'created_utc': datetime.now(timezone.utc).isoformat(),
     })),

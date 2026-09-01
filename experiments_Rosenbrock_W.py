@@ -16,7 +16,7 @@ rc('text', usetex=False)
 import argparse
 from samplers.sampler_nuts import hmc_nuts
 from samplers.sampler_peachees import hamiltonian_walk_chees
-from samplers.sampler_chees import hmc_chees
+from samplers.sampler_chees import hmc_cheesp
 from samplers.samplers import stretch_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
@@ -52,6 +52,10 @@ def parse_args():
     parser.add_argument('--n-samples', type=int, default=10000)
     parser.add_argument('--burn-in', type=int, default=1000)
     parser.add_argument('--n-warmup', type=int, default=1000)
+    parser.add_argument(
+        '--target-accept', type=float, default=0.651,
+        help='Target acceptance probability for NUTS and HWM (default: %(default)s).',
+    )
     parser.add_argument('--n-chains', type=int, default=N_CHAINS)
     parser.add_argument('--hwm-walkers', type=int, default=300,
                         help='Walker count used only by Hamiltonian Walk Move.')
@@ -285,10 +289,10 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     
     # Define samplers to benchmark - parameters tuned for the ring distribution
     samplers = {
-        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, n_thin=n_thin, max_tree_depth=8, seed=seed, progress_bar=True),
+        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, target_accept=args.target_accept, n_thin=n_thin, max_tree_depth=8, seed=seed, progress_bar=True),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial_hwm, total_samples,
-            n_walkers=hwm_walkers, epsilon=0.1, L=10, n_warmup=n_warmup, max_L=1000, n_thin=n_thin, seed=seed)
+            n_walkers=hwm_walkers, epsilon=0.1, L=10, n_warmup=n_warmup, target_accept=args.target_accept, max_L=1000, n_thin=n_thin, seed=seed)
     }
 
     

@@ -241,22 +241,45 @@ def _chees_update(state, log_alpha, pos_cur, pos_pro, vel, complement, aux, metr
     g_m = state.halton * jnp.exp(state.log_T) * diff_sq * inner
     g_m = jnp.where((alpha > 1e-4) & jnp.isfinite(g_m), g_m, 0.)
     g   = jnp.sum(alpha * g_m) / (jnp.sum(alpha) + reg)
+    # A reduction can overflow even when every individual g_m is finite.  A
+    # divergent proposal must not be allowed to poison the persistent ChEES
+    # optimizer state; skip that trajectory-length update instead.
+    g = jnp.where(jnp.isfinite(g), g, 0.)
 
     it = state.iteration + 1
     m  = beta1 * state.m + (1 - beta1) * g
     v  = beta2 * state.v + (1 - beta2) * g**2
-    delta = lr * (m / (1 - beta1**it)) / jnp.sqrt(v / (1 - beta2**it) + reg)
+    m = jnp.where(jnp.isfinite(m), m, 0.)
+    v = jnp.where(jnp.isfinite(v), v, 0.)
+    m_hat = m / (1 - beta1**it)
+    v_hat = v / (1 - beta2**it)
+    m_hat = jnp.where(jnp.isfinite(m_hat), m_hat, 0.)
+    v_hat = jnp.where(jnp.isfinite(v_hat), v_hat, 0.)
+    delta = lr * m_hat / jnp.sqrt(v_hat + reg)
+    delta = jnp.where(jnp.isfinite(delta), delta, 0.)
     delta = jnp.clip(delta, -0.35, 0.35)       # per-step clip (TFP/BlackJAX)
-    log_T = jnp.clip(state.log_T + delta, jnp.log(T_min), jnp.log(T_max))
-    log_Tb = jnp.logaddexp(jnp.log(T_interp) + state.log_T_bar,
+    old_log_T = jnp.where(jnp.isfinite(state.log_T), state.log_T, jnp.log(T_min))
+    old_log_Tb = jnp.where(
+        jnp.isfinite(state.log_T_bar), state.log_T_bar, old_log_T
+    )
+    log_T = jnp.clip(old_log_T + delta, jnp.log(T_min), jnp.log(T_max))
+    log_Tb = jnp.logaddexp(jnp.log(T_interp) + old_log_Tb,
                             jnp.log(1 - T_interp) + log_T)
+    log_Tb = jnp.where(jnp.isfinite(log_Tb), log_Tb, log_T)
     log_Tb = jnp.clip(log_Tb, jnp.log(T_min), jnp.log(T_max))
     return ChEESState(log_T, log_Tb, m, v, it, _halton(it))
+
+
+def _safe_leapfrog_count(T, eps, max_L):
+    proposed_L = jnp.ceil(T / eps)
+    proposed_L = jnp.where(jnp.isfinite(proposed_L), proposed_L, 1.)
+    return jnp.clip(proposed_L, 1, max_L).astype(int)
+
 
 def _chees_L(state, eps, jitter=0.6, bar=False, max_L=100):
     T = jnp.exp(state.log_T_bar if bar else state.log_T)
     T = (1 - jitter) * T + jitter * state.halton * T
-    return jnp.clip(jnp.ceil(T / eps), 1, max_L).astype(int)
+    return _safe_leapfrog_count(T, eps, max_L)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -459,7 +482,7 @@ def sampler_peaches(
             h = _halton(halton_offset + step_i)
             T = jnp.exp(final_log_T)
             T_jit = (1 - jitter) * T + jitter * h * T
-            Lc = jnp.clip(jnp.ceil(T_jit / final_eps), 1, max_L).astype(int)
+            Lc = _safe_leapfrog_count(T_jit, final_eps, max_L)
         else:
             Lc = fixed_L
         p1, la1, _, lp1n, _ = move_fn(g1, g2, final_eps, k1, log_prob_fn, _grad_U, Lc, lp1)
