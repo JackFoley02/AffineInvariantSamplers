@@ -16,14 +16,16 @@ from plotTools.benchmark_corner import benchmark_corner
 from plotTools.benchmark_trends import benchmark_trends
 from autocorrelation_func import autocorrelation_fft
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
+                                    FIXED_STANDARD_CHAINS,
                                     mean_walker_efficiency,
                                     sample_health_diagnostics,
+                                    scaled_ensemble_walkers,
                                     SWEEP_PARAMETERS, sweep_output_base,
                                     update_seed_manifest)
 from save_series_hdf5 import save_series_hdf5
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-N_CHAINS = 150
+N_CHAINS = FIXED_STANDARD_CHAINS
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -52,9 +54,15 @@ def parse_args():
         '--target-accept', type=float, default=0.651,
         help='Target acceptance probability for NUTS, HWM, and HMC (default: %(default)s).',
     )
-    parser.add_argument('--n-chains', type=int, default=N_CHAINS)
-    parser.add_argument('--hwm-walkers', type=int, default=300,
-                        help='Walker count used only by Hamiltonian Walk Move.')
+    parser.add_argument(
+        '--n-chains', type=int, default=N_CHAINS,
+        help='Accepted for compatibility; NUTS/HMC always use 64 chains.',
+    )
+    parser.add_argument(
+        '--hwm-walkers', '--ensemble-walkers', dest='hwm_walkers',
+        type=int, default=None,
+        help='HWM/Stretch walker count; minimum is max(64, 8 * dim).',
+    )
     parser.add_argument('--n-thin', type=int, default=1)
     parser.add_argument(
         '--output-dir',
@@ -75,6 +83,8 @@ def parse_args():
 
 args = parse_args()
 d = args.dim
+args.n_chains = N_CHAINS
+args.hwm_walkers = scaled_ensemble_walkers(d, args.hwm_walkers)
 af = args.af
 gpu = args.gpu
 cond = args.cond
@@ -148,6 +158,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
     """
     Benchmark different MCMC samplers on a high-dimensional Gaussian.
     """
+    n_chains = N_CHAINS
     # Create precision matrix (inverse covariance)
     precision_matrix = create_high_dim_precision(dim, 1)
     
@@ -224,7 +235,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
     
     # Initial state
     rng = np.random.default_rng(seed)
-    hwm_walkers = int(args.hwm_walkers)
+    hwm_walkers = scaled_ensemble_walkers(dim, args.hwm_walkers)
     if hwm_walkers < 4 or hwm_walkers % 2:
         raise ValueError("--hwm-walkers must be an even integer >= 4")
     u0_all = rng.multivariate_normal(

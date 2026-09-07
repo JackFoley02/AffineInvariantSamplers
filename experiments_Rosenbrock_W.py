@@ -20,12 +20,15 @@ from samplers.sampler_chees import hmc_cheesp
 from samplers.samplers import stretch_move
 from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
+                                    FIXED_STANDARD_CHAINS,
                                     mean_walker_efficiency,
                                     sample_health_diagnostics,
-                                    rosenbrock_moment_errors, update_seed_manifest)
+                                    rosenbrock_moment_errors,
+                                    scaled_ensemble_walkers,
+                                    update_seed_manifest)
 from save_series_hdf5 import save_series_hdf5
 
-N_CHAINS = 150
+N_CHAINS = FIXED_STANDARD_CHAINS
 ROSENBROCK_SIGMA = 1.5
 INITIALIZATION_CHOICES = ("oracle", "agnostic")
 
@@ -56,9 +59,15 @@ def parse_args():
         '--target-accept', type=float, default=0.651,
         help='Target acceptance probability for NUTS and HWM (default: %(default)s).',
     )
-    parser.add_argument('--n-chains', type=int, default=N_CHAINS)
-    parser.add_argument('--hwm-walkers', type=int, default=300,
-                        help='Walker count used only by Hamiltonian Walk Move.')
+    parser.add_argument(
+        '--n-chains', type=int, default=N_CHAINS,
+        help='Accepted for compatibility; NUTS/HMC always use 64 chains.',
+    )
+    parser.add_argument(
+        '--hwm-walkers', '--ensemble-walkers', dest='hwm_walkers',
+        type=int, default=None,
+        help='HWM walker count; minimum is max(64, 8 * dim).',
+    )
     parser.add_argument('--n-thin', type=int, default=1,
                         help='Transitions per saved draw; use 1 for reliable ESS estimates.')
     parser.add_argument(
@@ -75,6 +84,8 @@ def parse_args():
 
 args = parse_args()
 d = args.dim
+args.n_chains = N_CHAINS
+args.hwm_walkers = scaled_ensemble_walkers(d, args.hwm_walkers)
 af = args.af
 gpu = args.gpu
 cond = args.cond
@@ -150,6 +161,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         If set to true, perform an affine transformation to rotate the distribution.
         Tests performance of affine-invariant and non-affine-invariant samplers. 
     """
+    n_chains = N_CHAINS
 
     if affine: #Apply an affine transformation 
         #i.e. y = Ax + b
@@ -271,7 +283,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
     # Draw the same intrinsic ensemble for every condition number, then map
     # the complete ensemble into sampling coordinates.
-    hwm_walkers = int(args.hwm_walkers)
+    hwm_walkers = scaled_ensemble_walkers(dim, args.hwm_walkers)
     if hwm_walkers < 4 or hwm_walkers % 2:
         raise ValueError("--hwm-walkers must be an even integer >= 4")
     u0_all = sample_initial_ensemble(

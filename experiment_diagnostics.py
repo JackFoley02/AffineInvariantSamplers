@@ -9,6 +9,25 @@ from autocorrelation_func import integrated_autocorr_time
 
 
 SWEEP_PARAMETERS = ("dimension", "condition")
+FIXED_STANDARD_CHAINS = 64
+MIN_ENSEMBLE_WALKERS = 64
+ENSEMBLE_WALKERS_PER_DIMENSION = 8
+
+
+def scaled_ensemble_walkers(dim, requested=None):
+    """Return an ensemble size of at least ``max(64, 8 * dim)``.
+
+    ``requested`` may be used to run a larger ensemble, but it cannot lower
+    the dimension-scaled floor shared by HWM and Stretch Move experiments.
+    """
+    dim = int(dim)
+    if dim < 1:
+        raise ValueError("dim must be a positive integer")
+
+    required = max(MIN_ENSEMBLE_WALKERS, ENSEMBLE_WALKERS_PER_DIMENSION * dim)
+    if requested is None:
+        return required
+    return max(required, int(requested))
 
 
 def sweep_output_base(output_dir, sweep_parameter, dim, condition_number,
