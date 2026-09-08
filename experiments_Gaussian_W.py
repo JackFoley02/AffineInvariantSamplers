@@ -5,9 +5,10 @@ Results use the same condition/warmup/seed hierarchy as
 
     GaussianResultsW/<condition>c/<warmup>w/seeds/seed_<seed>/
 
-All ordinary Gaussian benchmark options are accepted. NUTS uses exactly 64
-chains, while HWM uses at least ``max(64, 8 * dim)`` walkers. In particular,
-``--output-dir`` can override the default ``GaussianResultsW`` root.
+All ordinary Gaussian benchmark options are accepted. Pass ``--schedule`` to
+use 64 NUTS chains and ``max(64, 8 * dim)`` HWM walkers; otherwise
+``--n-chains`` and ``--hwm-walkers`` are used. In particular, ``--output-dir``
+can override the default ``GaussianResultsW`` root.
 """
 
 from pathlib import Path

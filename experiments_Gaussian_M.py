@@ -25,7 +25,8 @@ from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
 from save_series_hdf5 import save_series_hdf5
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-N_CHAINS = FIXED_STANDARD_CHAINS
+N_CHAINS = 150
+HWM_WALKERS = 300
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -56,12 +57,18 @@ def parse_args():
     )
     parser.add_argument(
         '--n-chains', type=int, default=N_CHAINS,
-        help='Accepted for compatibility; NUTS/HMC always use 64 chains.',
+        help='Chain count used by NUTS/HMC (default: %(default)s).',
     )
     parser.add_argument(
         '--hwm-walkers', '--ensemble-walkers', dest='hwm_walkers',
-        type=int, default=None,
-        help='HWM/Stretch walker count; minimum is max(64, 8 * dim).',
+        type=int, default=HWM_WALKERS,
+        help='Walker count used by HWM/Stretch (default: %(default)s).',
+    )
+    parser.add_argument(
+        '--schedule', action='store_true',
+        help=('Use the shared dimension-dependent schedule: 64 NUTS/HMC '
+              'chains and max(64, 8 * dim) HWM/Stretch walkers. This '
+              'overrides --n-chains and --hwm-walkers.'),
     )
     parser.add_argument('--n-thin', type=int, default=1)
     parser.add_argument(
@@ -83,8 +90,9 @@ def parse_args():
 
 args = parse_args()
 d = args.dim
-args.n_chains = N_CHAINS
-args.hwm_walkers = scaled_ensemble_walkers(d, args.hwm_walkers)
+if args.schedule:
+    args.n_chains = FIXED_STANDARD_CHAINS
+    args.hwm_walkers = scaled_ensemble_walkers(d)
 af = args.af
 gpu = args.gpu
 cond = args.cond
@@ -158,7 +166,6 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
     """
     Benchmark different MCMC samplers on a high-dimensional Gaussian.
     """
-    n_chains = N_CHAINS
     # Create precision matrix (inverse covariance)
     precision_matrix = create_high_dim_precision(dim, 1)
     
@@ -235,7 +242,7 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
     
     # Initial state
     rng = np.random.default_rng(seed)
-    hwm_walkers = scaled_ensemble_walkers(dim, args.hwm_walkers)
+    hwm_walkers = int(args.hwm_walkers)
     if hwm_walkers < 4 or hwm_walkers % 2:
         raise ValueError("--hwm-walkers must be an even integer >= 4")
     u0_all = rng.multivariate_normal(
@@ -481,6 +488,7 @@ def save_light_results(results, transform, outdir, dim, af):
         "series_storage_thinning": series_storage_thinning,
         "series_storage_dtype": "float32",
         "series_axis_order": ["walker", "draw", "coordinate"],
+        "schedule": args.schedule,
         "n_chains": args.n_chains,
         "hwm_walkers_requested": args.hwm_walkers,
         "jax_enable_x64": bool(jax.config.jax_enable_x64),
@@ -508,6 +516,7 @@ update_seed_manifest(
      "sweep_parameter": args.sweep_parameter,
      "sweep_value": d if args.sweep_parameter == "dimension" else cond,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
+     "schedule": args.schedule,
      "n_thin": args.n_thin, "n_chains": args.n_chains,
      "hwm_walkers": args.hwm_walkers, "jax_enable_x64": True},
 )
