@@ -7,7 +7,6 @@ import os
 os.environ.setdefault("JAX_ENABLE_X64", "True")
 import argparse
 import json
-import traceback
 from samplers.sampler_nuts import hmc_nuts
 from samplers.samplers import stretch_move
 from samplers.sampler_chees import hmc_chees
@@ -21,6 +20,7 @@ from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     mean_walker_efficiency,
                                     sample_health_diagnostics,
                                     scaled_ensemble_walkers,
+                                    distribution_results_root,
                                     SWEEP_PARAMETERS, sweep_output_base,
                                     update_seed_manifest)
 from save_series_hdf5 import save_series_hdf5
@@ -66,27 +66,30 @@ def parse_args():
     parser.add_argument("--n-thin", type=int, default=1,
                         help="Transitions per saved draw; use 1 for reliable ESS estimates.")
     parser.add_argument(
-        "--output-dir",
-        default="GaussianResultsC",
-        help="Root results directory to create/use (default: %(default)s).",
+        "--output-dir", "--outdir",
+        default=None,
+        help=("Optional compartment within GaussianResults/ (for example, "
+              "M or warmup). Results never escape the master directory."),
     )
     parser.add_argument(
         "--sweep-parameter", "--sweep",
         choices=SWEEP_PARAMETERS,
         default="condition",
         help=("Parameter used for the directory directly below --output-dir. "
-              "'dimension' uses --dim; 'condition' uses --cond "
+              "'dimension' uses --dim; 'condition' uses --cond; "
+              "'n-chains' uses --n-chains "
               "(default: %(default)s)."),
     )
     parser.add_argument(
         "--warmup-sweep",
         action="store_true",
-        help=argparse.SUPPRESS,
+        help="Add <n-warmup>w to the output path and run NUTS/HWM only.",
     )
     return parser.parse_args()
 
 
 args = parse_args()
+results_root = distribution_results_root("Gaussian", args.output_dir)
 d = args.dim
 if args.schedule:
     args.n_chains = FIXED_STANDARD_CHAINS
@@ -346,7 +349,6 @@ def benchmark_samplers(dim=40, n_samples=10000, burn_in=1000, condition_number=c
             "ess_per_eval": ess_per_eval,
             "time": elapsed,
             "labels": None,
-            "sigma": 0.0,
             "epsilon": eps_final,
             "epsilon_history": eps_hist,
             "n_leapfrog": n_leapfrog,
@@ -393,14 +395,19 @@ if transform["affine"]:
 else:
     afstring = ""
 
-if args.warmup_sweep:
-    base_outdir = os.path.join(
-        args.output_dir, f"{cond:g}c", f"{args.n_warmup}w"
-    )
-else:
-    base_outdir = sweep_output_base(
-        args.output_dir, args.sweep_parameter, d, cond, affine=af
-    )
+sweep_value = {
+    "dimension": d,
+    "condition": cond,
+    "n-chains": args.n_chains,
+}[args.sweep_parameter]
+sweep_root = sweep_output_base(
+    results_root, args.sweep_parameter, d, cond,
+    affine=af, n_chains=args.n_chains,
+)
+base_outdir = (
+    os.path.join(sweep_root, f"{args.n_warmup}w")
+    if args.warmup_sweep else sweep_root
+)
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = f"{outdir}/corner"
 trends_dir = f"{outdir}/trends"
@@ -470,7 +477,6 @@ def save_light_results(results, transform, outdir, dim, af, cond):
             "evaluation_type": r["evaluation_type"],
             "ess_per_eval": float(r["ess_per_eval"]),
             "time": float(r["time"]),
-            "sigma": float(r["sigma"]),
             "epsilon": float(r["epsilon"]),
             "n_leapfrog": r["n_leapfrog"],
             "n_warmup": r["n_warmup"],
@@ -515,9 +521,10 @@ def save_light_results(results, transform, outdir, dim, af, cond):
         "jax_enable_x64": bool(jax.config.jax_enable_x64),
         "cond": cond,
         "condition_number": cond,
-        "output_dir": str(args.output_dir),
+        "output_dir": str(results_root),
+        "output_compartment": args.output_dir,
         "sweep_parameter": args.sweep_parameter,
-        "sweep_value": d if args.sweep_parameter == "dimension" else cond,
+        "sweep_value": sweep_value,
         "af": af,
         "transform_affine": bool(transform["affine"]),
         "summary": summary,
@@ -540,9 +547,10 @@ save_light_results(
 update_seed_manifest(
     base_outdir, seed, outdir,
     {"dim": d, "condition_number": cond, "affine": af,
-     "output_dir": str(args.output_dir),
+     "output_dir": str(results_root),
+     "output_compartment": args.output_dir,
      "sweep_parameter": args.sweep_parameter,
-     "sweep_value": d if args.sweep_parameter == "dimension" else cond,
+     "sweep_value": sweep_value,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
      "n_warmup": args.n_warmup,
      "schedule": args.schedule,
@@ -552,15 +560,15 @@ update_seed_manifest(
 
 if not args.no_plots:
     benchmark_corner(results, corner_dir, thin=10, transform=transform)
-    benchmark_trends(results, trends_dir, "GaussianC")
-    benchmark_autocorrelation(results, outdir, "GaussianC")
+    benchmark_trends(results, trends_dir, "Gaussian")
+    benchmark_autocorrelation(results, outdir, "Gaussian")
 
 if not args.no_report:
     from generate_report import SamplerReport
 
-    report = SamplerReport(results=results, label="GaussianC", transform=transform)
+    report = SamplerReport(results=results, label="Gaussian", transform=transform)
     report.compile_pdf(
-        texname=os.path.join(outdir, f"GaussianC_SamplerReport_{d}d{afstring}.tex"),
+        texname=os.path.join(outdir, f"Gaussian_SamplerReport_{d}d{afstring}.tex"),
         template_dir="templates",
         latex_compiler="pdflatex",
     )

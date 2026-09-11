@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 COND = [1, 3.162, 10, 31.62, 100, 316.2, 1000, 3162, 10000]
 SEEDS = ['00000', '00001', '00002', '00003', '00004']
 DISTRIBUTION = 'Rosenbrock'
-RESULT_ROOT = 'RosenbrockResultsC'
+RESULT_ROOT = 'RosenbrockResults/C'
 
 
 #initializing empty arrays for storage
@@ -65,12 +65,13 @@ arrays = {
         'created_utc': datetime.now(timezone.utc).isoformat(),
     })),
 }
-np.savez(f'{DISTRIBUTION}_cond_zipped_results.npz', **arrays)
+os.makedirs(f'{DISTRIBUTION}Results', exist_ok=True)
+np.savez(f'{DISTRIBUTION}Results/{DISTRIBUTION}_cond_zipped_results.npz', **arrays)
 print('Saving Complete! Please transfer the arrays to your machine.')
 
 
 DISTRIBUTION = 'Gaussian'
-RESULT_ROOT = 'GaussianResultsC'
+RESULT_ROOT = 'GaussianResults/C'
 
 
 #initializing empty arrays for storage
@@ -126,5 +127,6 @@ arrays = {
         'created_utc': datetime.now(timezone.utc).isoformat(),
     })),
 }
-np.savez(f'{DISTRIBUTION}_cond_zipped_results.npz', **arrays)
+os.makedirs(f'{DISTRIBUTION}Results', exist_ok=True)
+np.savez(f'{DISTRIBUTION}Results/{DISTRIBUTION}_cond_zipped_results.npz', **arrays)
 print('Saving Complete! Please transfer the arrays to your machine.')

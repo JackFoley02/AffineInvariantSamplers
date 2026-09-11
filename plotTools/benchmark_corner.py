@@ -174,10 +174,10 @@ def plot_corner(samples: np.ndarray, dims, labels: list[str], title: str, outfil
     
     if overlay_rosenbrock is not None:
 
-        sigma = overlay_rosenbrock.get('sigma', 0.7)
         a = overlay_rosenbrock.get('a', 1.0)
         b = overlay_rosenbrock.get('b', 100.0)
-        overlay_helper_rosenbrock(fig, dim_samples=dim_samples, dims=dims, sigma = sigma, a=a, b=b, color = 'crimson', ngrid = 250)
+        overlay_helper_rosenbrock(fig, dim_samples=dim_samples, dims=dims,
+                                  a=a, b=b, color='crimson', ngrid=250)
 
     elif overlay_gaussian is not None:
 
@@ -254,56 +254,56 @@ def benchmark_corner(results: dict, outdir: str, thin: int = 20, max: int = 3000
 
             print("Saved", outfile)
 
-def rosenbrock_axis_limits(a=1.0, sigma=1.5, b=100.0, nsig=5.0):
+def rosenbrock_axis_limits(a=1.0, b=100.0, n_stddevs=5.0):
     """
     Returns consistent axis limits for Rosenbrock plots.
     """
-    xmin = a - nsig * sigma
-    xmax = a + nsig * sigma
-
-    noise_std = sigma / np.sqrt(b)
+    x_std = 1.0 / np.sqrt(2.0)
+    noise_std = 1.0 / np.sqrt(2.0 * b)
+    xmin = a - n_stddevs * x_std
+    xmax = a + n_stddevs * x_std
 
     xmax_abs = max(abs(xmin), abs(xmax))
-    ymin = -nsig * noise_std
-    ymax = xmax_abs**2 + nsig * noise_std
+    ymin = -n_stddevs * noise_std
+    ymax = xmax_abs**2 + n_stddevs * noise_std
 
     return (xmin, xmax), (ymin, ymax)
 
 
-def rosenbrock_2d_pdf(X, Y, sigma=1.5, a=1.0, b=100.0):
+def rosenbrock_2d_pdf(X, Y, a=1.0, b=100.0):
     """
-    Exact normalized 2D Rosenbrock pair density:
-        p(x, y) = N(x; a, sigma^2) * N(y; x^2, sigma^2 / b)
+    Normalized 2D density proportional to exp(-Rosenbrock(x, y)).
     """
-    prefac = np.sqrt(b) / (2.0 * np.pi * sigma**2)
-    expo = -((a - X)**2 + b * (Y - X**2)**2) / (2.0 * sigma**2)
+    prefac = np.sqrt(b) / np.pi
+    expo = -((a - X)**2 + b * (Y - X**2)**2)
     return prefac * np.exp(expo)
 
 
-def rosenbrock_x_marginal(xgrid, sigma=1.5, a=1.0):
+def rosenbrock_x_marginal(xgrid, a=1.0):
     """
     Exact marginal for the first coordinate of a Rosenbrock pair.
-    x ~ N(a, sigma^2)
     """
-    return norm.pdf(xgrid, loc=a, scale=sigma)
+    return norm.pdf(xgrid, loc=a, scale=1.0 / np.sqrt(2.0))
 
 
-def rosenbrock_y_marginal(ygrid, sigma=1.5, a=1.0, b=100.0, nx=4000, x_pad_sigma=6.0):
+def rosenbrock_y_marginal(ygrid, a=1.0, b=100.0, nx=4000,
+                          x_pad_stddevs=6.0):
     """
     Computes the second-coordinate marginal
 
-        p(y) = ∫ N(x; a, sigma^2) N(y; x^2, sigma^2/b) dx
+        p(y) = ∫ p(x) p(y | x) dx
 
     using dense 1D numerical integration over x.
     """
-    noise_std = sigma / np.sqrt(b)
+    x_std = 1.0 / np.sqrt(2.0)
+    noise_std = 1.0 / np.sqrt(2.0 * b)
 
-    xmin = a - x_pad_sigma * sigma
-    xmax = a + x_pad_sigma * sigma
+    xmin = a - x_pad_stddevs * x_std
+    xmax = a + x_pad_stddevs * x_std
     xgrid = np.linspace(xmin, xmax, nx)
 
     # shape (nx, 1)
-    px = norm.pdf(xgrid[:, None], loc=a, scale=sigma)
+    px = norm.pdf(xgrid[:, None], loc=a, scale=x_std)
 
     # shape (nx, len(ygrid))
     py_given_x = norm.pdf(ygrid[None, :], loc=xgrid[:, None]**2, scale=noise_std)
@@ -320,7 +320,7 @@ def rosenbrock_y_marginal(ygrid, sigma=1.5, a=1.0, b=100.0, nx=4000, x_pad_sigma
 
     return py
 
-def overlay_helper_rosenbrock(fig, dim_samples, dims, sigma=1.5, a=1.0, b=100.0,
+def overlay_helper_rosenbrock(fig, dim_samples, dims, a=1.0, b=100.0,
                               color='crimson', ngrid=400):
     """
     Draw analytic Rosenbrock overlays in the Rosenbrock rest frame.
@@ -346,9 +346,9 @@ def overlay_helper_rosenbrock(fig, dim_samples, dims, sigma=1.5, a=1.0, b=100.0,
         grid = np.linspace(xmin, xmax, ngrid)
 
         if g == g_first:
-            pdf = rosenbrock_x_marginal(grid, sigma=sigma, a=a)
+            pdf = rosenbrock_x_marginal(grid, a=a)
         else:
-            pdf = rosenbrock_y_marginal(grid, sigma=sigma, a=a, b=b)
+            pdf = rosenbrock_y_marginal(grid, a=a, b=b)
 
         one_d[g] = {"grid": grid, "pdf": pdf}
 
@@ -393,7 +393,7 @@ def overlay_helper_rosenbrock(fig, dim_samples, dims, sigma=1.5, a=1.0, b=100.0,
 
             # True paired Rosenbrock block
             if same_pair and abs(col_global - row_global) == 1:
-                p2 = rosenbrock_2d_pdf(X, Y, sigma=sigma, a=a, b=b)
+                p2 = rosenbrock_2d_pdf(X, Y, a=a, b=b)
 
                 levels = np.max(p2) * np.array([0.20, 0.45, 0.70, 0.95])
                 levels = np.asarray(levels, dtype=float)
@@ -563,7 +563,6 @@ def transform_helper(points: np.ndarray, transform:dict | None = None):
     pts2 = points.reshape(-1, orig_shape[-1])
     out = (pts2 - B) @ Ainv.T
     return out.reshape(orig_shape)
-
 
 
 

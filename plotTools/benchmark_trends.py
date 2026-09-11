@@ -21,7 +21,7 @@ def normalize(series: np.ndarray) -> np.ndarray:
         raise ValueError(f'Invalid series shape: should be (T, D) or (W, T, D), instead got {series_arr.shape}')
     return series_arr
 
-def plot_trends(samples: np.ndarray, burnIn: np.ndarray, sig:float = None, outfile: str = None, labels: list[str] = None, title: str = None):
+def plot_trends(samples: np.ndarray, burnIn: np.ndarray, outfile: str = None, labels: list[str] = None, title: str = None):
     """
     Generates trend plots for the supplied samples, using the given parameter dimensions.
     Plots are generated using a fed title and list of labels. Plotes are saved at the given directory
@@ -65,7 +65,7 @@ def plot_trends(samples: np.ndarray, burnIn: np.ndarray, sig:float = None, outfi
 
         ax.plot(
             x[::stride],
-            full[:, ::stride, idx].T,
+            full[2:102, ::stride, idx].T,
             alpha=0.2,
             color='lightgray',
             zorder=1,
@@ -108,8 +108,6 @@ def benchmark_trends(results: dict, outdir:str, distrib:str = ''):
         burn_in = res['burn_in']
         burn_in = normalize(burn_in)
 
-        sigma = res['sigma']
-
         if "labels" not in res:
             labelList = None
         else:
@@ -118,9 +116,9 @@ def benchmark_trends(results: dict, outdir:str, distrib:str = ''):
         safe_name = name.replace(" ", "_")
         outfile = os.path.join(outdir, f'trends_{safe_name}.pdf')
 
-        plot_trends(series, burnIn = burn_in, sig = sigma, outfile = outfile, labels = labelList, title = distrib)
+        plot_trends(series, burnIn=burn_in, outfile=outfile,
+                    labels=labelList, title=distrib)
         print('Saved', outfile)
-
 
 
 

@@ -18,20 +18,20 @@ from samplers.sampler_nuts import hmc_nuts
 from samplers.sampler_peachees import hamiltonian_walk_chees
 from samplers.sampler_chees import hmc_chees
 from samplers.samplers import stretch_move
-from autocorrelation_func import autocorrelation_fft, integrated_autocorr_time
+from autocorrelation_func import autocorrelation_fft
 from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     FIXED_STANDARD_CHAINS,
                                     mean_walker_efficiency,
                                     sample_health_diagnostics,
                                     rosenbrock_moment_errors,
                                     scaled_ensemble_walkers,
-                                    SWEEP_PARAMETERS, sweep_output_base,
+                                    SWEEP_PARAMETERS, distribution_results_root,
+                                    sweep_output_base,
                                     update_seed_manifest)
 from save_series_hdf5 import save_series_hdf5
 N_CHAINS = 150
 HWM_WALKERS = 300
-ROSENBROCK_SIGMA = 1.5
-INITIALIZATION_CHOICES = ("oracle", "agnostic")
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument("--no-report", action="store_true")
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument("--gpu", type = int, default=None)
-    parser.add_argument('--cond', type =float, default = 50)
+    parser.add_argument('--cond', type = float, default = 50)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--n-samples', type=int, default=10000)
     parser.add_argument('--burn-in', type=int, default=1000)
@@ -75,27 +75,20 @@ def parse_args():
               'chains and max(64, 8 * dim) HWM/Stretch walkers. This '
               'overrides --n-chains and --hwm-walkers.'),
     )
-    parser.add_argument('--n-thin', type=int, default=1,
-                        help='Transitions per saved draw; use 1 for reliable ESS estimates.')
+    parser.add_argument('--n-thin', type=int, default=1)
     parser.add_argument(
-        '--initialization',
-        choices=INITIALIZATION_CHOICES,
-        default=os.environ.get("ROSENBROCK_INITIALIZATION", "agnostic").lower(),
-        help=("Initial ensemble in the intrinsic Rosenbrock frame: 'oracle' "
-              "uses exact target draws; 'agnostic' uses independent N(0, 2^2) "
-              "coordinates (default: %(default)s)."),
-    )
-    parser.add_argument(
-        '--output-dir',
-        default='RosenbrockResultsC',
-        help='Root results directory to create/use (default: %(default)s).',
+        '--output-dir', '--outdir',
+        default=None,
+        help=('Optional compartment within RosenbrockResults/ (for example, '
+              'Test). Results never escape the master directory.'),
     )
     parser.add_argument(
         '--sweep-parameter', '--sweep',
         choices=SWEEP_PARAMETERS,
-        default='condition',
+        default='dimension',
         help=('Parameter used for the directory directly below --output-dir. '
-              "'dimension' uses --dim; 'condition' uses --cond "
+              "'dimension' uses --dim; 'condition' uses --cond; "
+              "'n-chains' uses --n-chains "
               '(default: %(default)s).'),
     )
 
@@ -103,6 +96,7 @@ def parse_args():
 
 
 args = parse_args()
+results_root = distribution_results_root("Rosenbrock", args.output_dir)
 d = args.dim
 if args.schedule:
     args.n_chains = FIXED_STANDARD_CHAINS
@@ -111,7 +105,6 @@ af = args.af
 gpu = args.gpu
 cond = args.cond
 seed = args.seed
-INITIALIZATION_MODE = args.initialization
 
 if gpu is not None:
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
@@ -160,7 +153,9 @@ def affine_transform(dim, max_dim=128, seed=4321, trans_scale=2.0, cond=cond):
 
     return A, B, Ainv
 
-def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, sigma=1.5, a = 1.0, b = 100.0, affine = False, seed=0, n_warmup=1000, n_chains=N_CHAINS, n_thin=1):
+def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, a=1.0, b=100.0,
+                                          affine=False, seed=0, n_warmup=1000,
+                                          n_chains=N_CHAINS, n_thin=1):
     """
     Benchmark different MCMC samplers on a Rosenbrock distribution of any EVEN dimension.
     
@@ -172,8 +167,6 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         Number of samples to generate after burn-in
     burn_in : int
         Number of initial samples to discard as burn-in
-    sigma : float
-        Width parameter of the ring (smaller values make a sharper ring)
     a : float
         Parameter for the Rosenbrock Distribution
     b : float
@@ -193,9 +186,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         Ai = np.eye(dim)
         AiT = Ai.T
 
-    A_jax = jnp.asarray(A)
     B_jax = jnp.asarray(B)
-    Ai_jax = jnp.asarray(Ai)
     AiT_jax = jnp.asarray(AiT)
 
 
@@ -219,35 +210,6 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         params_even = x[..., 1::2] #all even parameters
         return np.sum(b * (params_odd **2 - params_even)**2 + (params_odd - a)**2, axis = -1)
 
-    def grad_Rosenbrock_paired(params: np.ndarray) -> np.ndarray:
-        """
-        Gradient function for the paired Rosenbrock distribution, for use in gradient-aware/Hamiltonian MC samplers
-
-        Arguments:
-        ----------
-        params:
-            array of the parameter values at the particular sampler location. Should be 1D and contain an even number of values.
-        
-        Returns:
-        ----------
-        grad:
-            gradient array of the paired Rosenbrock using the particular parameter values
-        """
-        x = np.asarray(params, dtype = float)
- 
-        if x.shape[-1] % 2 != 0: #make sure the array contains an even number of values
-            raise ValueError('Must use an even number of parameters/dimensions')
-        
-        x_o = x[..., 0::2] # odd parameters
-        x_e = x[..., 1::2] # even parameters
-
-        grad = np.zeros_like(x) #defining placehold gradient array
-
-        grad[..., 0::2] = -400.0 * x_o * (x_e - x_o**2) + 2.0 * (x_o - 1) #defining even pairing values
-        grad[..., 1::2] = 200.0 * (x_e - x_o**2)
-
-        return grad
-
     # Define the distribution log-density
     def log_density(z):
         """Log density [log(p(z))] of the Rosenbrock distribution (p(z))"""
@@ -255,22 +217,11 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         #u: original, non-rotated frame. z: rotated frame.
         u = (z - B) @ AiT
         R = Rosenbrock_paired(u) #solve for the Rosenbrock Distribution in its rest frame at point/vector u = (x, y)
-        logden = -0.5 * R / (sigma**2)
-        return logden
-
-    # Define the gradient of the negative log density
-    def gradient(z):
-        """Gradient of the negative log density (potential gradient/potential energy)"""
-        z = np.asarray(z)
-        u = (z - B) @ AiT
-        gu = 0.5 * grad_Rosenbrock_paired(u) / (sigma**2)
-        gz = gu @ Ai
-        return gz
-    
+        return -R
 
     def log_density_jax(x):
-        # Close over the benchmark parameters so all samplers and diagnostics
-        # use the same requested Rosenbrock width.
+        # Use the same benchmark parameters as the NumPy density and target
+        # diagnostics; do not maintain a second set of silent defaults.
         x = jnp.asarray(x)
 
         u = (x - B_jax) @ AiT_jax
@@ -280,37 +231,22 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
 
         R = jnp.sum(b * (params_even - params_odd**2)**2 + (params_odd -a)**2)
 
-        return -0.5 * R / sigma**2
+        return -R
 
     def sample_initial_ensemble(n_chains, seed):
         rng = np.random.default_rng(seed)
+        mode = np.empty(dim, dtype=float)
+        mode[0::2] = a
+        mode[1::2] = a**2
+        return rng.normal(loc=mode, scale=1.0, size=(n_chains, dim))
 
-        if INITIALIZATION_MODE == "agnostic":
-            # Do not encode the Rosenbrock valley y ~= x**2.  Every intrinsic
-            # coordinate starts independently in an isotropic, overdispersed
-            # cloud, so warmup/burn-in must discover the target geometry.
-            return 2.0 * rng.standard_normal((n_chains, dim))
 
-        # Oracle initialization: exact draws from the paired Rosenbrock target.
-        u = np.empty((n_chains, dim), dtype=float)
-        x_odd = a + sigma * rng.standard_normal((n_chains, dim // 2))
-        x_even = x_odd**2 + (sigma / np.sqrt(b)) * rng.standard_normal((n_chains, dim // 2))
-        u[:, 0::2] = x_odd
-        u[:, 1::2] = x_even
-
-        return u
-
-    # Draw the same intrinsic ensemble for every condition number, then map
-    # the complete ensemble into sampling coordinates.
     hwm_walkers = int(args.hwm_walkers)
     if hwm_walkers < 4 or hwm_walkers % 2:
         raise ValueError("--hwm-walkers must be an even integer >= 4")
-    u0_all = sample_initial_ensemble(
-        n_chains=max(n_chains, hwm_walkers), seed=seed
-    )
+    u0_all = sample_initial_ensemble(max(n_chains, hwm_walkers), seed)
     initial = u0_all[:n_chains] @ A.T + B
     initial_hwm = u0_all[:hwm_walkers] @ A.T + B
-
     
     # Dictionary to store results
     results = {}
@@ -320,7 +256,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     
     # Define samplers to benchmark - parameters tuned for the ring distribution
     samplers = {
-        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, target_accept=args.target_accept, n_thin=n_thin, max_tree_depth=8, seed=seed, progress_bar=True),
+        "Dense-mass NUTS": lambda: hmc_nuts(log_density_jax, initial, total_samples, epsilon=0.1, n_chains=n_chains, n_warmup=n_warmup, target_accept=args.target_accept, n_thin=n_thin, max_tree_depth=8, seed=seed, progress_bar=False),
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial_hwm, total_samples,
             n_walkers=hwm_walkers, epsilon=0.1, L=10, n_warmup=n_warmup, target_accept=args.target_accept, max_L=1000, n_thin=n_thin, seed=seed
@@ -333,8 +269,6 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     
     # Benchmark each sampler with careful error handling
     for name, sampler_func in samplers.items():
-        # stretch_move uses NumPy's legacy global RNG; reseeding here also
-        # makes sampler ordering irrelevant.
         np.random.seed(seed)
         print(f"Running {name}...")
         start_time = time.time()
@@ -368,10 +302,9 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             # Compute autocorrelation for first dimension
             acf = autocorrelation_fft(np.mean(post_burn_in_samples[:, :, 0],axis=0))
             
+            # Compute integrated autocorrelation time for first dimension
             transform_now = {"affine": affine, "A": A, "B": B}
-            ess, tau, ess_by_coordinate, tau_by_coordinate, ess_valid_fraction = worst_coordinate_ess(
-                post_burn_in_samples, transform_now
-            )
+            ess, tau, ess_by_coordinate, tau_by_coordinate, ess_valid_fraction = worst_coordinate_ess(post_burn_in_samples, transform_now)
             tau_std = float(np.nanstd(tau_by_coordinate))
             
         except Exception as e:
@@ -380,29 +313,27 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             # Create dummy data in case of error
             flat_samples = np.zeros((10, dim))
             acceptance_rates = np.zeros(dim)
-            series = np.zeros((1, 0, dim))
-            burn_in_samps = np.zeros((1, 0, dim))
             mean = np.full(dim, np.nan)
             cov = np.full((dim, dim), np.nan)
             acf = np.zeros(100)
             tau, tau_std, ess = np.nan, np.nan, np.nan
             ess_by_coordinate = np.full(dim, np.nan)
             ess_valid_fraction = np.zeros(dim)
+            series = np.zeros((1, 0, dim))
+            burn_in_samps = np.zeros((1, 0, dim))
             eps_final, eps_hist = 0.0, np.asarray([])
             n_leapfrog = sampler_n_warmup = target_accept = gamma = t0 = kappa = None
             sampler_info = {}
         
         elapsed = time.time() - start_time
-        n_evaluations, evaluation_type = evaluation_count(
-            name, len(acceptance_rates), n_samples, n_thin, n_leapfrog
-        )
+        n_evaluations, evaluation_type = evaluation_count(name, len(acceptance_rates), n_samples, n_thin, n_leapfrog)
         ess_per_eval, evaluations_per_walker = mean_walker_efficiency(
             ess, n_evaluations, len(acceptance_rates)
         )
         transform_now = {"affine": affine, "A": A, "B": B}
         health = sample_health_diagnostics(series, transform_now)
         moment_errors = rosenbrock_moment_errors(
-            series, transform_now, a=a, b=b, sigma=sigma
+            series, transform_now, a=a, b=b
         )
         
         # Store results
@@ -426,7 +357,6 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             "ess_per_eval": ess_per_eval,
             "time": elapsed,
             "labels": None,
-            "sigma":sigma,
             "epsilon":eps_final,
             "epsilon_history":eps_hist,
             "n_leapfrog":n_leapfrog,
@@ -434,8 +364,7 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
             "target_accept":target_accept,
             "gamma":gamma,
             "t0":t0,
-            "kappa":kappa,
-            "cond":cond
+            "kappa":kappa
             ,"acceptance_rate_mean": float(np.nanmean(acceptance_rates))
             ,"acceptance_rate_min": float(np.nanmin(acceptance_rates))
             ,"acceptance_rate_max": float(np.nanmax(acceptance_rates))
@@ -455,9 +384,9 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
     #storing transformation info into separate dict
     transformation = {"affine":affine, "A":A, 'B':B}
 
-    return results, sigma, log_density, transformation
+    return results, log_density, transformation
 
-def plot_Rosenbrock_results(results, log_density, dim=2, sigma=1.5, transform = {'affine':False}, output_dir=None):
+def plot_Rosenbrock_results(results, log_density, dim=2, transform = {'affine':False}, output_dir=None):
     """Plot comparison of sampler results for ring distribution"""
     samplers = list(results.keys())
 
@@ -470,9 +399,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=1.5, transform = 
         print("Skipping Rosenbrock overlay plot: need at least 2 dimensions.")
         return
 
-    def rosenbrock_2d_log_density(x, y, sigma=1.5, a=1.0, b=100.0):
-        R = (a - x)**2 + b * (y - x**2)**2
-        return -0.5 * R / (sigma**2)
+
 
 
     def to_rest_frame(points, transform):
@@ -492,7 +419,8 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=1.5, transform = 
     x = np.linspace(-3, 3, 400)
     y = np.linspace(-2, 10, 400)
     X, Y = np.meshgrid(x, y)
-    Z = rosenbrock_2d_log_density(X, Y, sigma=sigma, a=1, b=100)
+    points = np.stack((X, Y), axis=-1)
+    Z = np.exp(log_density(points))
 
     n_panels = len(samplers)
     ncols = min(3, n_panels)
@@ -559,7 +487,7 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=1.5, transform = 
 
     fig.suptitle("Sampler projections onto first two Rosenbrock dimensions", y=0.995)
     fig.tight_layout()
-    output_dir = output_dir or f"RosenbrockResultsC/{cond}c"
+    output_dir = output_dir or f"RosenbrockResultsM/{dim}d{rotstring}"
     fig.savefig(os.path.join(output_dir, "Rosenbrock_overlay_first2.png"), dpi=220, bbox_inches="tight")
     plt.close()
     colors = ['black', 'black', 'purple', 'blue', 'green', 'y', 'orange', 'red']
@@ -589,11 +517,10 @@ def plot_Rosenbrock_results(results, log_density, dim=2, sigma=1.5, transform = 
 
 # Run the benchmark for the Rosenbrock distribution
 # Note: You need to have the sampler functions (side_move, stretch_move, etc.) defined elsewhere
-results, sigma, log_density, transform = benchmark_samplers_Rosenbrock_general(
+results, log_density, transform = benchmark_samplers_Rosenbrock_general(
     dim=d, n_samples=args.n_samples, burn_in=args.burn_in,
-    sigma=ROSENBROCK_SIGMA,
-    affine=af, seed=seed, n_warmup=args.n_warmup, n_chains=args.n_chains,
-    n_thin=args.n_thin
+    affine=af, seed=seed, n_warmup=args.n_warmup,
+    n_chains=args.n_chains, n_thin=args.n_thin,
 )
 
 if transform['affine']:
@@ -602,9 +529,15 @@ else:
     afstring = ''
 
 
-# Initialization mode is metadata, not part of the path.
+# Make directories for this sweep point and seed.
+sweep_value = {
+    "dimension": d,
+    "condition": cond,
+    "n-chains": args.n_chains,
+}[args.sweep_parameter]
 base_outdir = sweep_output_base(
-    args.output_dir, args.sweep_parameter, d, cond, affine=af
+    results_root, args.sweep_parameter, d, cond,
+    affine=af, n_chains=args.n_chains,
 )
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = os.path.join(outdir, "corner")
@@ -613,7 +546,7 @@ os.makedirs(outdir, exist_ok=True)
 os.makedirs(corner_dir, exist_ok=True)
 os.makedirs(trends_dir, exist_ok=True)
 
-overlay_rosenbrock = {'a':1.0, 'b':100.0, 'sigma':sigma}
+overlay_rosenbrock = {'a':1.0, 'b':100.0}
 
 
 
@@ -629,6 +562,7 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
 
     for name, r in results.items():
         key = name.replace(" ", "_")
+
 
         # Keep short diagnostics
         arrays[f"{key}_acceptance_rates"] = np.asarray(r["acceptance_rates"], dtype=np.float32)
@@ -661,25 +595,25 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
             "evaluation_type": r["evaluation_type"],
             "ess_per_eval": float(r["ess_per_eval"]),
             "time": float(r["time"]),
-            "sigma": float(r["sigma"]),
             "epsilon": float(r["epsilon"]),
             "n_leapfrog": r["n_leapfrog"],
             "n_warmup": r["n_warmup"],
             "target_accept": r["target_accept"],
-            "cond":r['cond']
-            ,"mean_mse": float(r["mean_mse"])
-            ,"cov_mse": float(r["cov_mse"])
-            ,"acceptance_rate_mean": r["acceptance_rate_mean"]
-            ,"acceptance_rate_min": r["acceptance_rate_min"]
-            ,"acceptance_rate_max": r["acceptance_rate_max"]
-            ,"n_divergent": r["n_divergent"]
-            ,"actual_n_chains": r["actual_n_chains"]
-            ,"diagnostic_draws_per_chain": r["diagnostic_draws_per_chain"]
-            ,"sample_finite_fraction": r["sample_finite_fraction"]
-            ,"finite_draw_fraction": r["finite_draw_fraction"]
-            ,"sample_covariance_rank": r["sample_covariance_rank"]
-            ,"sample_covariance_full_rank": r["sample_covariance_full_rank"]
-            
+            "gamma": r["gamma"],
+            "t0": r["t0"],
+            "kappa": r["kappa"],
+            "mean_mse": float(r["mean_mse"]),
+            "cov_mse": float(r["cov_mse"]),
+            "acceptance_rate_mean": r["acceptance_rate_mean"],
+            "acceptance_rate_min": r["acceptance_rate_min"],
+            "acceptance_rate_max": r["acceptance_rate_max"],
+            "n_divergent": r["n_divergent"],
+            "actual_n_chains": r["actual_n_chains"],
+            "diagnostic_draws_per_chain": r["diagnostic_draws_per_chain"],
+            "sample_finite_fraction": r["sample_finite_fraction"],
+            "finite_draw_fraction": r["finite_draw_fraction"],
+            "sample_covariance_rank": r["sample_covariance_rank"],
+            "sample_covariance_full_rank": r["sample_covariance_full_rank"],
         }
 
     series_storage_thinning = 1
@@ -693,10 +627,9 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
         "condition_number": cond,
         "output_dir": str(args.output_dir),
         "sweep_parameter": args.sweep_parameter,
-        "sweep_value": d if args.sweep_parameter == "dimension" else cond,
+        "sweep_value": sweep_value,
         "n_samples": args.n_samples,
         "burn_in": args.burn_in,
-        "n_warmup": args.n_warmup,
         "n_thin": args.n_thin,
         "series_file": series_path.name,
         "series_storage": "hdf5",
@@ -708,12 +641,6 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
         "hwm_walkers_requested": args.hwm_walkers,
         "jax_enable_x64": bool(jax.config.jax_enable_x64),
         "af": af,
-        "initialization_mode": INITIALIZATION_MODE,
-        "initialization_description": (
-            "independent N(0, 2^2) coordinates in the intrinsic Rosenbrock frame"
-            if INITIALIZATION_MODE == "agnostic"
-            else "exact draws from the paired Rosenbrock target"
-        ),
         "transform_affine": bool(transform["affine"]),
         "overlay_rosenbrock": overlay,
         "summary": summary,
@@ -737,29 +664,31 @@ update_seed_manifest(
     {"dim": d, "condition_number": cond, "affine": af,
      "output_dir": str(args.output_dir),
      "sweep_parameter": args.sweep_parameter,
-     "sweep_value": d if args.sweep_parameter == "dimension" else cond,
+     "sweep_value": sweep_value,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
      "schedule": args.schedule,
      "n_thin": args.n_thin, "n_chains": args.n_chains,
-     "hwm_walkers": args.hwm_walkers, "jax_enable_x64": True,
-     "initialization_mode": INITIALIZATION_MODE},
+     "hwm_walkers": args.hwm_walkers, "jax_enable_x64": True},
 )
 
 # Plot the results
 if not args.no_plots:
 
     plot_Rosenbrock_results(
-        results, log_density, dim=d, sigma=ROSENBROCK_SIGMA,
+        results, log_density, dim=d,
         transform=transform, output_dir=outdir
     )
     benchmark_corner(results, corner_dir, thin = 10,  overlay_rosenbrock=overlay_rosenbrock, transform=transform)
-    benchmark_trends(results, trends_dir, 'RosenbrockC')
-    benchmark_autocorrelation(results, outdir, 'RosenbrockC')
+    benchmark_trends(results, trends_dir, 'Rosenbrock')
+    benchmark_autocorrelation(results, outdir, 'Rosenbrock')
 
 if not args.no_report:
     from generate_report import SamplerReport
 
-    report = SamplerReport(results=results, label = 'RosenbrockC', transform=transform, overlay=overlay_rosenbrock)
-    report.compile_pdf(texname = os.path.join(outdir, f'RosenbrockC_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
+    report_label = "Rosenbrock"
+    report = SamplerReport(results=results, label=report_label, transform=transform, overlay=overlay_rosenbrock)
+    report.compile_pdf(texname = os.path.join(outdir, f'{report_label}_SamplerReport_{d}d{afstring}.tex'), template_dir='templates', latex_compiler='pdflatex')
 
-print("Rosenbrock distribution benchmark complete. Check the output directory for plots.")
+print(
+    f"Rosenbrock distribution benchmark complete "
+)

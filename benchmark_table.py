@@ -69,7 +69,7 @@ class TableRow:
 
 _PARAMETER_RE = re.compile(
     r"^(?P<number>[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
-    r"(?P<kind>[dc])?(?P<affine>_af)?$"
+    r"(?P<kind>chains|d|c)?(?P<affine>_af)?$"
 )
 
 
@@ -329,7 +329,8 @@ def _parameter_directory_candidates(
     allowed_suffixes = {
         "dimension": {"d"},
         "condition": {"c"},
-        "auto": {"d", "c"},
+        "n-chains": {"chains"},
+        "auto": {"d", "c", "chains"},
     }[parameter_kind]
     if requested_suffix:
         allowed_suffixes &= {requested_suffix}
@@ -381,7 +382,7 @@ def resolve_parameter_directories(
             names = ", ".join(path.name for path in candidates)
             raise TableDataError(
                 f"parameter {token!r} is ambiguous ({names}); "
-                "set --parameter-kind or include the d/c suffix"
+                "set --parameter-kind or include the d/c/chains suffix"
             )
         if candidates[0] in resolved:
             raise TableDataError(
@@ -880,18 +881,19 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "results_dir",
         type=Path,
-        help="Results root containing directories such as 2d or 3.162c.",
+        help="Results root containing directories such as 2d, 3.162c, or 64chains.",
     )
     parser.add_argument(
         "--parameters",
         nargs="+",
         required=True,
         metavar="VALUE",
-        help="Testing parameters; space- or comma-separated, with optional d/c suffix.",
+        help=("Testing parameters; space- or comma-separated, with optional "
+              "d/c/chains suffix."),
     )
     parser.add_argument(
         "--parameter-kind",
-        choices=("auto", "dimension", "condition"),
+        choices=("auto", "dimension", "condition", "n-chains"),
         default="auto",
         help="How to interpret unsuffixed parameter values (default: auto).",
     )

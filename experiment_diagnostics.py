@@ -8,10 +8,29 @@ import numpy as np
 from autocorrelation_func import integrated_autocorr_time
 
 
-SWEEP_PARAMETERS = ("dimension", "condition")
+SWEEP_PARAMETERS = ("dimension", "condition", "n-chains", "warmup")
 FIXED_STANDARD_CHAINS = 64
 MIN_ENSEMBLE_WALKERS = 64
 ENSEMBLE_WALKERS_PER_DIMENSION = 8
+
+
+def distribution_results_root(distribution, output_dir=None):
+    """Return a distribution's master results directory or one compartment.
+
+    ``output_dir`` is deliberately relative so every experiment result remains
+    below ``<distribution>Results``.
+    """
+    root = Path(f"{distribution}Results")
+    if output_dir in (None, "", "."):
+        return root
+
+    compartment = Path(output_dir)
+    if compartment.is_absolute() or ".." in compartment.parts:
+        raise ValueError(
+            "output_dir must be a relative subdirectory of "
+            f"{root}; got {output_dir!r}"
+        )
+    return root / compartment
 
 
 def scaled_ensemble_walkers(dim, requested=None):
@@ -31,13 +50,14 @@ def scaled_ensemble_walkers(dim, requested=None):
 
 
 def sweep_output_base(output_dir, sweep_parameter, dim, condition_number,
-                      affine=False):
+                      affine=False, n_chains=None):
     """Return the result directory for one point in a benchmark sweep.
 
     Dimension sweeps use ``<output_dir>/<dim>d`` (or ``<dim>d_af`` for an
-    affine run), while condition sweeps use ``<output_dir>/<condition>c``.
-    These layouts match the directories consumed by ``benchmark_table.py``
-    and the plotting loaders.
+    affine run), condition sweeps use ``<output_dir>/<condition>c``, and
+    chain-count sweeps use ``<output_dir>/<n_chains>chains``. These layouts
+    match the directories consumed by ``benchmark_table.py`` and the plotting
+    loaders.
     """
     output_root = Path(output_dir).expanduser()
     if sweep_parameter == "dimension":
@@ -45,6 +65,10 @@ def sweep_output_base(output_dir, sweep_parameter, dim, condition_number,
         sweep_dir = f"{int(dim)}d{suffix}"
     elif sweep_parameter == "condition":
         sweep_dir = f"{float(condition_number):g}c"
+    elif sweep_parameter == "n-chains":
+        if n_chains is None or int(n_chains) < 1:
+            raise ValueError("n_chains must be a positive integer")
+        sweep_dir = f"{int(n_chains)}chains"
     else:
         choices = ", ".join(SWEEP_PARAMETERS)
         raise ValueError(
@@ -188,7 +212,7 @@ def sample_health_diagnostics(samples, transform):
     }
 
 
-def rosenbrock_moment_errors(samples, transform, a=1.0, b=100.0, sigma=1.5):
+def rosenbrock_moment_errors(samples, transform, a=1.0, b=100.0):
     """Rest-frame mean/covariance errors for the paired Rosenbrock target."""
     rest = to_rest_frame(_diagnostic_subsample(samples), transform)
     flat = rest.reshape(-1, rest.shape[-1])
@@ -198,12 +222,11 @@ def rosenbrock_moment_errors(samples, transform, a=1.0, b=100.0, sigma=1.5):
 
     target_mean = np.empty(rest.shape[-1])
     target_mean[0::2] = a
-    target_mean[1::2] = a**2 + sigma**2
+    target_mean[1::2] = a**2 + 0.5
 
     pair_cov = np.array([
-        [sigma**2, 2.0 * a * sigma**2],
-        [2.0 * a * sigma**2,
-         4.0 * a**2 * sigma**2 + 2.0 * sigma**4 + sigma**2 / b],
+        [0.5, a],
+        [a, 2.0 * a**2 + 0.5 + 0.5 / b],
     ])
     target_cov = np.kron(np.eye(rest.shape[-1] // 2), pair_cov)
     sample_mean = np.mean(flat, axis=0)

@@ -14,15 +14,16 @@ As such, an algorithm that is both affine-invariant and gradient-aware would be 
 
 Standard MCMC samplers are all in `samplers.py.` Hamiltonian/gradient-aware samplers are in `samplers_dualAvg.py`, which includes the ability to iteratively select the optimal step size during the warm-up phase. 
 
-So far, report generation is set up for the Rosenbrock and Gaussian distributions. In the AffineInvariantSamplers directory, experiments may be run in the CLI using the following:
+Report generation is set up for the Rosenbrock and Gaussian distributions. Each
+distribution has one experiment runner:
 
 ```
-python experiments_Rosenbrock_general.py
+python experiments_Rosenbrock.py
 python experiments_Gaussian.py
 ```
 Additional parser arguments can be passed to each of these experiments. The `--dim` argument specifies the number of dimensions of the chosen distribution (default: 2). Passing the `--af` flag will apply an arbitrary affine transformation to the target distribution, which is useful for testing affine-invariance.
 ```
-python experiments_Rosenbrock_general.py --dim 10
+python experiments_Rosenbrock.py --dim 10
 python experiments_Gaussian.py --dim 20 --af
 ```
 
@@ -30,7 +31,7 @@ python experiments_Gaussian.py --dim 20 --af
 
 Each experiment generates a LaTeX compiled report which contains all of the benchmark tests' information, including:
 - Parameter means, standard deviations, and covariances
-- Sampler initialization and run parameters
+- Sampler run parameters
 - Hamiltonian step size tuning (if applicable)
 
 The reports also include the following figures:
@@ -41,29 +42,33 @@ The reports also include the following figures:
 
 ## Experiment output layout
 
-The four primary Gaussian and Rosenbrock experiment scripts accept a custom
-result root and the parameter used to structure a sweep:
+Results always stay under the distribution-specific master directory:
+`GaussianResults/` or `RosenbrockResults/`. `--output-dir` (also available as
+`--outdir`) selects an optional relative compartment inside that directory.
+The parameter used to structure a sweep is selected independently:
 
 ```bash
 python experiments_Gaussian.py \
-    --output-dir GaussianResultsW \
+    --output-dir W \
     --sweep-parameter condition \
     --cond 100 \
+    --warmup-sweep \
     --seed 0
 
-python experiments_Rosenbrock_M.py \
-    --output-dir RosenbrockResultsM \
-    --sweep-parameter dimension \
-    --dim 32 \
+python experiments_Rosenbrock.py \
+    --output-dir M_chains \
+    --sweep-parameter n-chains \
+    --n-chains 32 \
     --seed 0
 ```
 
-`--sweep-parameter dimension` uses the existing `--dim` value and writes to
-`<output-dir>/<dim>d/seeds/seed_<seed>` (with `_af` after `d` for affine
-dimension runs). `--sweep-parameter condition` uses `--cond` and writes to
-`<output-dir>/<condition>c/seeds/seed_<seed>`. The shorter `--sweep` alias is
-equivalent to `--sweep-parameter`. Missing directories are created
-automatically.
+`--sweep-parameter dimension` writes to `<master>/<compartment>/<dim>d`, with
+`_af` after `d` for affine runs. `condition` uses `<condition>c`, and
+`n-chains` uses `<n-chains>chains`. Runs then use `seeds/seed_<seed>`.
+`--warmup-sweep` adds `<n-warmup>w` before `seeds` and runs only NUTS and HWM.
+The shorter `--sweep` alias is equivalent to `--sweep-parameter`. Absolute
+paths and `..` are rejected for `--output-dir` so results cannot escape their
+distribution's master directory.
 
 ## Cross-run LaTeX tables
 
@@ -72,24 +77,27 @@ from the lightweight `results_summary.json` files and compiles a same-named PDF
 by default. For a dimension sweep:
 
 ```bash
-python benchmark_table.py RosenbrockResultsM \
+python benchmark_table.py RosenbrockResults/M \
     --parameters 2 4 8 16 \
     --parameter-kind dimension \
     --row-order parameter \
-    --output RosenbrockResultsM/benchmark_table_2d_4d_8d_16d.tex
+    --output RosenbrockResults/M/benchmark_table_2d_4d_8d_16d.tex
 ```
 
 Use `--row-order sampler` to group all runs for a sampler together. Condition
 numbers work the same way, for example:
 
 ```bash
-python benchmark_table.py GaussianResultsC \
+python benchmark_table.py GaussianResults/C \
     --parameters 1 3.162 10 \
     --parameter-kind condition
 ```
 
+For a chain-count sweep, use `--parameter-kind n-chains`; directories may be
+specified as either bare values or names such as `64chains`.
+
 Parameter values can also be comma-separated or include their directory suffix
-(`2d`, `3.162c`). Pass `--no-compile` to generate only the standalone `.tex`
+(`2d`, `3.162c`, `64chains`). Pass `--no-compile` to generate only the standalone `.tex`
 source. Pass `--fragment` when the output will be included inside an existing
 LaTeX document; fragment output is not compiled.
 
