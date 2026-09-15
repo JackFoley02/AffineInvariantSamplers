@@ -72,7 +72,7 @@ def parse_args():
     parser.add_argument(
         '--schedule', action='store_true',
         help=('Use the shared dimension-dependent schedule: 64 NUTS/HMC '
-              'chains and max(64, 8 * dim) HWM/Stretch walkers. This '
+              'chains and max(64, 4 * dim) HWM/Stretch walkers. This '
               'overrides --n-chains and --hwm-walkers.'),
     )
     parser.add_argument('--n-thin', type=int, default=1)
@@ -88,7 +88,8 @@ def parse_args():
         default='dimension',
         help=('Parameter used for the directory directly below --output-dir. '
               "'dimension' uses --dim; 'condition' uses --cond; "
-              "'n-chains' uses --n-chains "
+              "'n-chains' uses --n-chains; 'acceptance-rate' uses "
+              "--target-accept "
               '(default: %(default)s).'),
     )
 
@@ -402,6 +403,11 @@ def plot_Rosenbrock_results(results, log_density, dim=2, transform = {'affine':F
 
 
 
+    def rosenbrock_2d_log_density(x, y, a=1.0, b=100.0):
+        """Log density of one paired Rosenbrock component."""
+        R = b * (x**2 - y)**2 + (x - a)**2
+        return -R
+
     def to_rest_frame(points, transform):
         """
         Undo the affine transformation so the samples are plotted in the
@@ -417,10 +423,9 @@ def plot_Rosenbrock_results(results, log_density, dim=2, transform = {'affine':F
 
     # grid for background density
     x = np.linspace(-3, 3, 400)
-    y = np.linspace(-2, 10, 400)
+    y = np.linspace(-1, 7, 400)
     X, Y = np.meshgrid(x, y)
-    points = np.stack((X, Y), axis=-1)
-    Z = np.exp(log_density(points))
+    Z = np.exp(rosenbrock_2d_log_density(X, Y))
 
     n_panels = len(samplers)
     ncols = min(3, n_panels)
@@ -450,8 +455,17 @@ def plot_Rosenbrock_results(results, log_density, dim=2, transform = {'affine':F
         pts_rest = pts_rest_full[..., :2]
         starts_rest = starts_rest_full[..., :2]
 
-        # background density
-        ax.contour(X, Y, Z, levels=12, linewidths=0.7)
+        # Draw line-only density contours beneath the walker samples.
+        ax.contour(
+            X,
+            Y,
+            Z,
+            levels=12,
+            colors="0.35",
+            linewidths=0.75,
+            alpha=0.65,
+            zorder=1,
+        )
 
         # all thinned samples
         colors = plt.cm.tab10(np.linspace(0, 1, pts_rest.shape[0]))
@@ -461,9 +475,10 @@ def plot_Rosenbrock_results(results, log_density, dim=2, transform = {'affine':F
                 pts_rest[j, :, 0],
                 pts_rest[j, :, 1],
                 s=4,
-                alpha=0.5,
+                alpha=0.55,
                 color=colors[j],
-                rasterized=True, zorder = 1
+                rasterized=True,
+                zorder=3,
             )
 
             ax.scatter(
@@ -472,13 +487,15 @@ def plot_Rosenbrock_results(results, log_density, dim=2, transform = {'affine':F
                 marker='x',
                 s=40,
                 linewidths=1.5,
-                color=colors[j], zorder = 10
+                color=colors[j],
+                zorder=4,
             )
-            ax.set_title(name)
-            ax.set_xlabel("x0")
-            ax.set_ylabel("x1")
-            ax.set_xlim(-3, 3)
-            ax.set_ylim(-2, 10)
+
+        ax.set_title(name)
+        ax.set_xlabel("x0")
+        ax.set_ylabel("x1")
+        ax.set_xlim(-3, 3)
+        ax.set_ylim(-1, 7)
 
 
     # hide unused axes
@@ -534,10 +551,12 @@ sweep_value = {
     "dimension": d,
     "condition": cond,
     "n-chains": args.n_chains,
+    "acceptance-rate": args.target_accept,
 }[args.sweep_parameter]
 base_outdir = sweep_output_base(
     results_root, args.sweep_parameter, d, cond,
     affine=af, n_chains=args.n_chains,
+    target_accept=args.target_accept,
 )
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = os.path.join(outdir, "corner")
@@ -628,6 +647,7 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
         "output_dir": str(args.output_dir),
         "sweep_parameter": args.sweep_parameter,
         "sweep_value": sweep_value,
+        "target_accept": args.target_accept,
         "n_samples": args.n_samples,
         "burn_in": args.burn_in,
         "n_thin": args.n_thin,
@@ -665,6 +685,7 @@ update_seed_manifest(
      "output_dir": str(args.output_dir),
      "sweep_parameter": args.sweep_parameter,
      "sweep_value": sweep_value,
+     "target_accept": args.target_accept,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
      "schedule": args.schedule,
      "n_thin": args.n_thin, "n_chains": args.n_chains,

@@ -60,11 +60,19 @@ python experiments_Rosenbrock.py \
     --sweep-parameter n-chains \
     --n-chains 32 \
     --seed 0
+
+python experiments_Gaussian.py \
+    --output-dir acceptance \
+    --sweep-parameter acceptance-rate \
+    --target-accept 0.8 \
+    --seed 0
 ```
 
 `--sweep-parameter dimension` writes to `<master>/<compartment>/<dim>d`, with
 `_af` after `d` for affine runs. `condition` uses `<condition>c`, and
-`n-chains` uses `<n-chains>chains`. Runs then use `seeds/seed_<seed>`.
+`n-chains` uses `<n-chains>chains`. `acceptance-rate` uses the shared
+`--target-accept` value and writes to `<target-accept>accept`. Runs then use
+`seeds/seed_<seed>`.
 `--warmup-sweep` adds `<n-warmup>w` before `seeds` and runs only NUTS and HWM.
 The shorter `--sweep` alias is equivalent to `--sweep-parameter`. Absolute
 paths and `..` are rejected for `--output-dir` so results cannot escape their

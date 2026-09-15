@@ -8,10 +8,16 @@ import numpy as np
 from autocorrelation_func import integrated_autocorr_time
 
 
-SWEEP_PARAMETERS = ("dimension", "condition", "n-chains", "warmup")
+SWEEP_PARAMETERS = (
+    "dimension",
+    "condition",
+    "n-chains",
+    "warmup",
+    "acceptance-rate",
+)
 FIXED_STANDARD_CHAINS = 64
 MIN_ENSEMBLE_WALKERS = 64
-ENSEMBLE_WALKERS_PER_DIMENSION = 8
+ENSEMBLE_WALKERS_PER_DIMENSION = 4
 
 
 def distribution_results_root(distribution, output_dir=None):
@@ -34,7 +40,7 @@ def distribution_results_root(distribution, output_dir=None):
 
 
 def scaled_ensemble_walkers(dim, requested=None):
-    """Return an ensemble size of at least ``max(64, 8 * dim)``.
+    """Return an ensemble size of at least ``max(64, 4 * dim)``.
 
     ``requested`` may be used to run a larger ensemble, but it cannot lower
     the dimension-scaled floor shared by HWM and Stretch Move experiments.
@@ -50,14 +56,14 @@ def scaled_ensemble_walkers(dim, requested=None):
 
 
 def sweep_output_base(output_dir, sweep_parameter, dim, condition_number,
-                      affine=False, n_chains=None):
+                      affine=False, n_chains=None, target_accept=None):
     """Return the result directory for one point in a benchmark sweep.
 
     Dimension sweeps use ``<output_dir>/<dim>d`` (or ``<dim>d_af`` for an
     affine run), condition sweeps use ``<output_dir>/<condition>c``, and
-    chain-count sweeps use ``<output_dir>/<n_chains>chains``. These layouts
-    match the directories consumed by ``benchmark_table.py`` and the plotting
-    loaders.
+    chain-count sweeps use ``<output_dir>/<n_chains>chains``, and target
+    acceptance-rate sweeps use ``<output_dir>/<target_accept>accept``. Each
+    directory is the stable parent for that sweep point's seed outputs.
     """
     output_root = Path(output_dir).expanduser()
     if sweep_parameter == "dimension":
@@ -69,6 +75,16 @@ def sweep_output_base(output_dir, sweep_parameter, dim, condition_number,
         if n_chains is None or int(n_chains) < 1:
             raise ValueError("n_chains must be a positive integer")
         sweep_dir = f"{int(n_chains)}chains"
+    elif sweep_parameter == "acceptance-rate":
+        if (
+            target_accept is None
+            or not np.isfinite(target_accept)
+            or not 0.0 < float(target_accept) < 1.0
+        ):
+            raise ValueError(
+                "target_accept must be a finite value between 0 and 1"
+            )
+        sweep_dir = f"{float(target_accept):g}accept"
     else:
         choices = ", ".join(SWEEP_PARAMETERS)
         raise ValueError(

@@ -60,7 +60,7 @@ def parse_args():
     parser.add_argument(
         "--schedule", action="store_true",
         help=("Use the shared dimension-dependent schedule: 64 NUTS/HMC "
-              "chains and max(64, 8 * dim) HWM/Stretch walkers. This "
+              "chains and max(64, 4 * dim) HWM/Stretch walkers. This "
               "overrides --n-chains and --hwm-walkers."),
     )
     parser.add_argument("--n-thin", type=int, default=1,
@@ -77,7 +77,8 @@ def parse_args():
         default="condition",
         help=("Parameter used for the directory directly below --output-dir. "
               "'dimension' uses --dim; 'condition' uses --cond; "
-              "'n-chains' uses --n-chains "
+              "'n-chains' uses --n-chains; 'acceptance-rate' uses "
+              "--target-accept "
               "(default: %(default)s)."),
     )
     parser.add_argument(
@@ -399,10 +400,12 @@ sweep_value = {
     "dimension": d,
     "condition": cond,
     "n-chains": args.n_chains,
+    "acceptance-rate": args.target_accept,
 }[args.sweep_parameter]
 sweep_root = sweep_output_base(
     results_root, args.sweep_parameter, d, cond,
     affine=af, n_chains=args.n_chains,
+    target_accept=args.target_accept,
 )
 base_outdir = (
     os.path.join(sweep_root, f"{args.n_warmup}w")
@@ -525,6 +528,7 @@ def save_light_results(results, transform, outdir, dim, af, cond):
         "output_compartment": args.output_dir,
         "sweep_parameter": args.sweep_parameter,
         "sweep_value": sweep_value,
+        "target_accept": args.target_accept,
         "af": af,
         "transform_affine": bool(transform["affine"]),
         "summary": summary,
@@ -551,6 +555,7 @@ update_seed_manifest(
      "output_compartment": args.output_dir,
      "sweep_parameter": args.sweep_parameter,
      "sweep_value": sweep_value,
+     "target_accept": args.target_accept,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
      "n_warmup": args.n_warmup,
      "schedule": args.schedule,
