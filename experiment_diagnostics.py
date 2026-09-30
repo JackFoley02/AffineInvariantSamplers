@@ -12,7 +12,6 @@ SWEEP_PARAMETERS = (
     "dimension",
     "condition",
     "n-chains",
-    "warmup",
     "acceptance-rate",
 )
 FIXED_STANDARD_CHAINS = 64
@@ -91,6 +90,14 @@ def sweep_output_base(output_dir, sweep_parameter, dim, condition_number,
             f"sweep_parameter must be one of: {choices}; got {sweep_parameter!r}"
         )
     return output_root / sweep_dir
+
+
+def warmup_sweep_output_base(sweep_root, n_warmup):
+    """Nest one warmup-length point beneath a primary sweep point."""
+    n_warmup = int(n_warmup)
+    if n_warmup < 1:
+        raise ValueError("n_warmup must be a positive integer")
+    return Path(sweep_root) / f"{n_warmup}w"
 
 
 def to_rest_frame(samples, transform):

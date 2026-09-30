@@ -93,6 +93,12 @@ def hmc_nuts(
             Accepted but not used. NUTS has no fixed leapfrog count; use
             max_tree_depth to cap trajectory expansion instead.
 
+        n_samples, n_thin:
+            ``n_samples`` is the number of retained draws, matching the other
+            benchmark sampler adapters. NumPyro counts pre-thinning
+            transitions, so the wrapper requests ``n_samples * n_thin``
+            transitions and lets NumPyro retain every ``n_thin``-th draw.
+
     Returns:
         samples:
             Array with shape (n_chains, n_samples, dim).
@@ -133,11 +139,16 @@ def hmc_nuts(
     )
     kernel = NUTS(**nuts_kwargs)
 
+    # NumPyro interprets ``num_samples`` as the number of transitions before
+    # thinning, whereas this benchmark's adapters interpret ``n_samples`` as
+    # the number of draws returned after thinning.
+    numpyro_num_samples = int(n_samples) * int(n_thin)
+
     mcmc_kwargs = _supported_kwargs(
         MCMC,
         {
             "num_warmup": n_warmup,
-            "num_samples": n_samples,
+            "num_samples": numpyro_num_samples,
             "num_chains": n_chains,
             "thinning": n_thin,
             "chain_method": chain_method,

@@ -27,6 +27,7 @@ from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     scaled_ensemble_walkers,
                                     SWEEP_PARAMETERS, distribution_results_root,
                                     sweep_output_base,
+                                    warmup_sweep_output_base,
                                     update_seed_manifest)
 from save_series_hdf5 import save_series_hdf5
 N_CHAINS = 150
@@ -91,6 +92,11 @@ def parse_args():
               "'n-chains' uses --n-chains; 'acceptance-rate' uses "
               "--target-accept "
               '(default: %(default)s).'),
+    )
+    parser.add_argument(
+        '--warmup-sweep',
+        action='store_true',
+        help='Add <n-warmup>w to the output path and run NUTS/HWM only.',
     )
 
     return parser.parse_args()
@@ -261,11 +267,13 @@ def benchmark_samplers_Rosenbrock_general(dim=2, n_samples=10000, burn_in=1000, 
         "Hamiltonian Walk Move": lambda: hamiltonian_walk_chees(
             log_density_jax, initial_hwm, total_samples,
             n_walkers=hwm_walkers, epsilon=0.1, L=10, n_warmup=n_warmup, target_accept=args.target_accept, max_L=1000, n_thin=n_thin, seed=seed
-        ),        
-        "Stretch Move": lambda: stretch_move(log_density, initial_hwm, total_samples, n_walkers=hwm_walkers, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
-        "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, target_accept=args.target_accept, max_L=1000, n_thin=n_thin, seed=seed),
- 
+        ),
     }
+    if not args.warmup_sweep:
+        samplers.update({
+            "Stretch Move": lambda: stretch_move(log_density, initial_hwm, total_samples, n_walkers=hwm_walkers, a=1.0+2.151/np.sqrt(dim), n_thin=n_thin),
+            "HMC": lambda: hmc_chees(log_density_jax, initial, total_samples, epsilon=0.1, L=10, n_chains=n_chains, n_warmup=n_warmup, target_accept=args.target_accept, max_L=1000, n_thin=n_thin, seed=seed),
+        })
 
     
     # Benchmark each sampler with careful error handling
@@ -553,10 +561,14 @@ sweep_value = {
     "n-chains": args.n_chains,
     "acceptance-rate": args.target_accept,
 }[args.sweep_parameter]
-base_outdir = sweep_output_base(
+sweep_root = sweep_output_base(
     results_root, args.sweep_parameter, d, cond,
     affine=af, n_chains=args.n_chains,
     target_accept=args.target_accept,
+)
+base_outdir = (
+    warmup_sweep_output_base(sweep_root, args.n_warmup)
+    if args.warmup_sweep else sweep_root
 )
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
 corner_dir = os.path.join(outdir, "corner")
@@ -650,6 +662,7 @@ def save_light_results(results, transform, overlay, outdir, dim, af):
         "target_accept": args.target_accept,
         "n_samples": args.n_samples,
         "burn_in": args.burn_in,
+        "n_warmup": args.n_warmup,
         "n_thin": args.n_thin,
         "series_file": series_path.name,
         "series_storage": "hdf5",
@@ -687,6 +700,7 @@ update_seed_manifest(
      "sweep_value": sweep_value,
      "target_accept": args.target_accept,
      "n_samples": args.n_samples, "burn_in": args.burn_in,
+     "n_warmup": args.n_warmup,
      "schedule": args.schedule,
      "n_thin": args.n_thin, "n_chains": args.n_chains,
      "hwm_walkers": args.hwm_walkers, "jax_enable_x64": True},

@@ -22,6 +22,7 @@ from experiment_diagnostics import (worst_coordinate_ess, evaluation_count,
                                     scaled_ensemble_walkers,
                                     distribution_results_root,
                                     SWEEP_PARAMETERS, sweep_output_base,
+                                    warmup_sweep_output_base,
                                     update_seed_manifest)
 from save_series_hdf5 import save_series_hdf5
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -408,7 +409,7 @@ sweep_root = sweep_output_base(
     target_accept=args.target_accept,
 )
 base_outdir = (
-    os.path.join(sweep_root, f"{args.n_warmup}w")
+    warmup_sweep_output_base(sweep_root, args.n_warmup)
     if args.warmup_sweep else sweep_root
 )
 outdir = os.path.join(base_outdir, "seeds", f"seed_{seed:05d}")
